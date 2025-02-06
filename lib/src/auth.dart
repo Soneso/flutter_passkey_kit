@@ -415,6 +415,8 @@ class AuthAttestationResponse {
   String? authenticatorData;
   String? publicKey;
   List<String>? transports;
+  String? signature;
+  String? userHandle;
 
   /// Constructor for Response.
   AuthAttestationResponse({
@@ -423,6 +425,8 @@ class AuthAttestationResponse {
     this.authenticatorData,
     this.publicKey,
     this.transports,
+    this.signature,
+    this.userHandle,
   });
 
   /// Construct Response from JSON.
@@ -435,6 +439,8 @@ class AuthAttestationResponse {
       transports: json['transports'] != null
           ? List<String>.from(json['transports'])
           : null,
+      signature: json['signature'],
+      userHandle: json['userHandle'],
     );
   }
 
@@ -446,6 +452,8 @@ class AuthAttestationResponse {
       'authenticatorData': authenticatorData,
       'publicKey': publicKey,
       'transports': transports,
+      'signature': signature,
+      'userHandle': userHandle,
     };
   }
 }

@@ -17,18 +17,7 @@ Future<void> main() async {
   }
 
   await dotenv.load(fileName: ".env");
-
-  UserModel? user;
-  final prefs = await SharedPreferences.getInstance();
-  final username = prefs.getString('sp:username');
-  final contractId = prefs.getString('sp:contractId');
-  final credentialsId = prefs.getString('sp:credentialsId');
-
-  if (username != null && contractId != null && credentialsId != null) {
-    user = UserModel(username: username,
-        credentialsId: credentialsId,
-        contractId: contractId);
-  }
+  UserModel? user = await UserModel.fromPrefs();
   runApp(MyApp(user));
 }
 

@@ -22,7 +22,7 @@ class HomeScreen extends StatelessWidget {
           ElevatedButton.icon(
             onPressed: () async {
               await logout();
-              Navigator.of(context).pushAndRemoveUntil(
+              Navigator.of(NavigationService.navigatorKey.currentContext!).pushAndRemoveUntil(
                   MaterialPageRoute(
                       builder: (builder) => const AuthScreen(key: Key('auth_screen'))),
                       (predicate) => false);
@@ -46,13 +46,13 @@ class HomeScreen extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
               const Icon(
-                Icons.wallet_membership_rounded,
-                color: Colors.deepPurple,
+                Icons.check,
+                color: Colors.green,
                 size: 100,
               ),
               const SizedBox(height: 40),
               Text(
-                'Hello ${user.username}! This is your smart wallet address:',
+                'Hello ${user.username}! You are connected to your wallet!',
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -81,30 +81,6 @@ class HomeScreen extends StatelessWidget {
                     onPressed: () => _copyToClipboard(user.contractId),
                   ),
                 ],
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'You can now connect to your wallet',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.deepPurple,
-                ),
-              ),
-              const SizedBox(height: 60),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  await logout();
-                },
-                icon: const Icon(Icons.how_to_vote),
-                label: const Text('Try it now!'),
-                style: ElevatedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  backgroundColor: Colors.deepPurple,
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 12.0, horizontal: 24.0),
-                  textStyle: const TextStyle(fontSize: 16.0),
-                ),
               ),
             ],
           ),

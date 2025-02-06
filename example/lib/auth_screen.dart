@@ -3,9 +3,9 @@ import 'package:credential_manager/credential_manager.dart' as cd;
 import 'package:example/services/auth_service.dart';
 import 'package:example/services/env_service.dart';
 import 'package:example/services/stellar_service.dart';
+import 'package:example/wallet_created_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_passkey_kit/flutter_passkey_kit.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'model/user_model.dart';
 import 'services/navigation_service.dart';
 import 'home_screen.dart';
@@ -43,58 +43,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 16, color: Colors.deepPurple),
               ),
-              const SizedBox(height: 24),
-              TextField(
-                onChanged: (value) {
-                  setState(() {
-                    username = value;
-                    errorMessage = null;
-                  });
-                },
-                decoration: const InputDecoration(
-                  hintText: 'Enter your username',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person, color: Colors.deepPurple),
-                ),
-              ),
-              const SizedBox(height: 16),
-              if (errorMessage != null)
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Text(
-                      errorMessage!,
-                      style: const TextStyle(color: Colors.red),
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 16),
-              ElevatedButton.icon(
-                onPressed: isCreatingWallet ? null : createWallet,
-                icon: isCreatingWallet
-                    ? const SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: CircularProgressIndicator(
-                    valueColor:
-                    AlwaysStoppedAnimation<Color>(Colors.white),
-                    strokeWidth: 2,
-                  ),
-                )
-                    : const Icon(Icons.person_add),
-                label: isCreatingWallet
-                    ? const SizedBox.shrink()
-                    : const Text('Create Wallet'),
-                style: ElevatedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  backgroundColor: Colors.deepPurple,
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 12.0, horizontal: 24.0),
-                  textStyle: const TextStyle(fontSize: 16.0),
-                ),
-              ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 20),
               ElevatedButton.icon(
                 onPressed: isConnectingWallet ? null : connectWallet,
                 icon: isConnectingWallet
@@ -118,6 +67,63 @@ class _AuthScreenState extends State<AuthScreen> {
                   textStyle: const TextStyle(fontSize: 16.0),
                 ),
               ),
+              const SizedBox(height: 24),
+              const Text(
+                'Or enter a username to create a new one:',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 16, color: Colors.deepPurple),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                onChanged: (value) {
+                  setState(() {
+                    username = value;
+                    errorMessage = null;
+                  });
+                },
+                decoration: const InputDecoration(
+                  hintText: 'Username for new wallet',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person, color: Colors.deepPurple),
+                ),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: isCreatingWallet ? null : createWallet,
+                icon: isCreatingWallet
+                    ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    valueColor:
+                    AlwaysStoppedAnimation<Color>(Colors.white),
+                    strokeWidth: 2,
+                  ),
+                )
+                    : const Icon(Icons.person_add),
+                label: isCreatingWallet
+                    ? const SizedBox.shrink()
+                    : const Text('Create new Wallet'),
+                style: ElevatedButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  backgroundColor: Colors.deepPurple,
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 12.0, horizontal: 24.0),
+                  textStyle: const TextStyle(fontSize: 16.0),
+                ),
+              ),
+              const SizedBox(height: 16),
+              if (errorMessage != null)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(bottom: 8.0),
+                    child: Text(
+                      errorMessage!,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -149,7 +155,7 @@ class _AuthScreenState extends State<AuthScreen> {
           credentialsId: result.keyId,
           contractId: result.contractId);
 
-      await _save(user);
+      await user.save();
 
       // submit to stellar
       var response = await StellarService.feeBump(result.signedTx);
@@ -159,7 +165,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
       Navigator.of(NavigationService.navigatorKey.currentContext!).pushReplacement(
         MaterialPageRoute(
-          builder: (context) => HomeScreen(
+          builder: (context) => WalletCreatedScreen(
             user: user,
           ),
         ),
@@ -178,13 +184,6 @@ class _AuthScreenState extends State<AuthScreen> {
         isCreatingWallet = false;
       });
     }
-  }
-
-  static Future<void> _save(UserModel user) async {
-    var prefs = await SharedPreferences.getInstance();
-    prefs.setString('sp:credentialsId', user.credentialsId);
-    prefs.setString('sp:username', user.username);
-    prefs.setString('sp:contractId', user.contractId);
   }
 
   PasskeyKit _getPasskeyKit() {
@@ -207,11 +206,11 @@ class _AuthScreenState extends State<AuthScreen> {
       var result = await kit.connectWallet(AuthService.getPasskeyCredentials);
 
       var user = UserModel(
-          username: username!,
+          username: result.username != null ? result.username! : "Friend" ,
           credentialsId: result.keyId,
           contractId: result.contractId);
 
-      await _save(user);
+      await user.save();
 
       Navigator.of(NavigationService.navigatorKey.currentContext!).pushReplacement(
         MaterialPageRoute(

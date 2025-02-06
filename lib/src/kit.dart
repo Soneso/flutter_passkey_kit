@@ -80,7 +80,10 @@ class PasskeyKit {
   Future<ConnectWalletResponse> connectWallet(
       Future<PublicKeyCredential> Function(
               {required CredentialLoginOptions options})
-          getPasskeyCredentials) async {
+          getPasskeyCredentials, {String? keyId}) async {
+
+    String? username;
+
     if (keyId == null) {
       var options = CredentialLoginOptions(
         challenge: _stringToBase64Url.encode(_challengeStr),
@@ -93,6 +96,10 @@ class PasskeyKit {
         throw Exception('Invalid passkey login credentials: id is null');
       }
       keyId = credentials.id;
+      var userHandleB64 = credentials.response?.userHandle;
+      if (userHandleB64 != null) {
+        username = _stringToBase64Url.decode(base64Url.normalize(userHandleB64));
+      }
     }
 
     final server = SorobanServer(rpcUrl);
@@ -111,7 +118,9 @@ class PasskeyKit {
       throw Exception("contract not found: $contractId");
     }
 
-    return ConnectWalletResponse(keyId!, contractId);
+    this.keyId = keyId;
+
+    return ConnectWalletResponse(keyId, contractId, username: username);
   }
 
   Future<Transaction> _createAndSignDeployTx(
@@ -307,8 +316,9 @@ class CreateWalletResponse {
 class ConnectWalletResponse {
   String keyId;
   String contractId;
+  String? username;
 
-  ConnectWalletResponse(this.keyId, this.contractId);
+  ConnectWalletResponse(this.keyId, this.contractId, {this.username});
 }
 
 abstract class PasskeySigner {
