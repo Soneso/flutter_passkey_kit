@@ -12,6 +12,7 @@ class PasskeyKit {
   Network network;
   String? keyId;
   late KeyPair walletKeyPair;
+  late SorobanServer server;
 
   static const String _challengeStr = "stellaristhebetterblockchain";
   static final Codec<String, String> _stringToBase64Url = utf8.fuse(base64Url);
@@ -19,6 +20,8 @@ class PasskeyKit {
   PasskeyKit(this.rpId, this.rpcUrl, this.walletWasmHash, this.network) {
     walletKeyPair = KeyPair.fromSecretSeedList(
         Util.hash(Uint8List.fromList(network.networkPassphrase.codeUnits)));
+    server = SorobanServer(rpcUrl);
+    server.enableLogging = true;
   }
 
   Future<CreateWalletResponse> createWallet(
@@ -102,9 +105,6 @@ class PasskeyKit {
       }
     }
 
-    final server = SorobanServer(rpcUrl);
-    server.enableLogging = true;
-
     // sign in cannot retrieve a public-key so we can only derive the
     // contract address
     final contractId = _deriveContractId(credentialsId: keyId!);
@@ -125,7 +125,6 @@ class PasskeyKit {
 
   /// Signs a SorobanAuthorizationEntry with passkey credentials. Make sure that the
   /// [entry] has addressCredentials with the expiration ledger sequence correctly set.
-  /// If you don't want to ask the user for his passkey authorization make sure that the
   /// Provide [getPasskeyCredentials] so that the user can be asked for their credentials.
   Future<SorobanAuthorizationEntry>signAuthEntryWithPasskey(SorobanAuthorizationEntry entry,
       Future<PublicKeyCredential> Function(
@@ -194,6 +193,88 @@ class PasskeyKit {
     return entry;
   }
 
+  Future<Transaction> addSecp256r1(String keyId,
+      String publicKey, {
+        Map<Address, List<PasskeySignerKey>?>? limits,
+        PasskeySignerStorage? storage,
+        int? expiration
+      }) async {
+
+    if (this.keyId == null) {
+      throw Exception("wallet must be connected. call connectWallet first");
+    }
+    final contractId = _deriveContractId(credentialsId: this.keyId!);
+    var keyIdBytes =
+    base64Url.decode(base64Url.normalize(keyId));
+    final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
+    var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes,
+        expiration: expiration,
+        storage:  storage ?? PasskeySignerStorage.persistent);
+
+    final function = InvokeContractHostFunction(
+        contractId,
+        'add_signer',
+        arguments: [signer.toXdrSCVal()]
+    );
+
+    return await _txForHostFunction(function);
+
+  }
+
+  Future<Transaction> updateSecp256r1(String keyId,
+      String publicKey, {
+        Map<Address, List<PasskeySignerKey>?>? limits,
+        PasskeySignerStorage? storage,
+        int? expiration
+      }) async {
+
+    if (this.keyId == null) {
+      throw Exception("wallet must be connected. call connectWallet first");
+    }
+    final contractId = _deriveContractId(credentialsId: this.keyId!);
+    var keyIdBytes =
+    base64Url.decode(base64Url.normalize(keyId));
+    final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
+    var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes,
+        expiration: expiration,
+        storage:  storage ?? PasskeySignerStorage.persistent);
+
+    final function = InvokeContractHostFunction(
+        contractId,
+        'update_signer',
+        arguments: [signer.toXdrSCVal()]
+    );
+
+    return await _txForHostFunction(function);
+
+  }
+
+  Future<Transaction> _txForHostFunction(HostFunction function) async {
+    final operation = InvokeHostFuncOpBuilder(function).build();
+    final sourceAccountId = walletKeyPair.accountId;
+    final sourceAccount = await server.getAccount(sourceAccountId);
+    if (sourceAccount == null) {
+      var msg =
+          "source account not found on the Stellar Network: $sourceAccount";
+      dev.log(msg);
+      throw Exception(msg);
+    }
+
+    final transaction = TransactionBuilder(sourceAccount).addOperation(operation).build();
+    final request = SimulateTransactionRequest(transaction);
+    final simulateResponse = await server.simulateTransaction(request);
+
+    if (simulateResponse.resultError != null) {
+      throw Exception("Could not simulate transaction");
+    }
+
+    transaction.sorobanTransactionData = simulateResponse.transactionData;
+    transaction.addResourceFee(simulateResponse.minResourceFee!);
+    transaction.setSorobanAuth(simulateResponse.sorobanAuth);
+
+    return transaction;
+  }
+
   int _sigSortComparison(XdrSCMapEntry a, XdrSCMapEntry b) {
     final propertyA = a.key.vec![0].sym! + a.key.vec![1].toBase64EncodedXdrString();
     final propertyB = b.key.vec![0].sym! + b.key.vec![1].toBase64EncodedXdrString();
@@ -227,7 +308,7 @@ class PasskeyKit {
     final server = SorobanServer(rpcUrl);
     server.enableLogging = true;
 
-    final publicKey = _getPublicKey(attestationResponse);
+    final publicKey = getPublicKey(attestationResponse);
 
     if (publicKey == null) {
       throw Exception("Could not extract public key from attestation response");
@@ -274,7 +355,7 @@ class PasskeyKit {
 
   /// Extracts the public key from the authenticator attestation [response] received
   /// from the webauthn registration.
-  static Uint8List? _getPublicKey(AuthAttestationResponse response) {
+  static Uint8List? getPublicKey(AuthAttestationResponse response) {
     final publicKeyStr = response.publicKey;
 
     Uint8List? publicKey = publicKeyStr != null
@@ -520,10 +601,10 @@ class Secp256r1Signature {
 }
 
 class Secp256r1PasskeySigner extends PasskeySigner {
-  Uint8List bytes; // todo rename
-  Uint8List bytesN; // todo rename
+  Uint8List keyId;
+  Uint8List publicKey;
 
-  Secp256r1PasskeySigner(this.bytes, this.bytesN,
+  Secp256r1PasskeySigner(this.keyId, this.publicKey,
       {int? expiration,
       Map<Address, List<PasskeySignerKey>?>? limits,
       PasskeySignerStorage? storage})
@@ -534,8 +615,8 @@ class Secp256r1PasskeySigner extends PasskeySigner {
   XdrSCVal toXdrSCVal() {
     List<XdrSCVal> elements = List<XdrSCVal>.empty(growable: true);
     elements.add(XdrSCVal.forSymbol(type.value));
-    elements.add(XdrSCVal.forBytes(bytes));
-    elements.add(XdrSCVal.forBytes(bytesN));
+    elements.add(XdrSCVal.forBytes(keyId));
+    elements.add(XdrSCVal.forBytes(publicKey));
     elements.addAll(_signerArgs());
     return XdrSCVal.forVec(elements);
   }
@@ -571,13 +652,13 @@ class Ed25519PasskeySignerKey extends PasskeySignerKey {
 }
 
 class Secp256r1PasskeySignerKey extends PasskeySignerKey {
-  Uint8List bytes;
-  Secp256r1PasskeySignerKey(this.bytes) : super(PasskeySignerType.secp256r1);
+  Uint8List keyId;
+  Secp256r1PasskeySignerKey(this.keyId) : super(PasskeySignerType.secp256r1);
 
   @override
   XdrSCVal toXdrSCVal() {
     return XdrSCVal.forVec(
-        [XdrSCVal.forSymbol(type.value), XdrSCVal.forBytes(bytes)]);
+        [XdrSCVal.forSymbol(type.value), XdrSCVal.forBytes(keyId)]);
   }
 }
 
