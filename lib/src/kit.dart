@@ -123,6 +123,104 @@ class PasskeyKit {
     return ConnectWalletResponse(keyId, contractId, username: username);
   }
 
+  /// Signs a SorobanAuthorizationEntry with passkey credentials. Make sure that the
+  /// [entry] has addressCredentials with the expiration ledger sequence correctly set.
+  /// If you don't want to ask the user for his passkey authorization make sure that the
+  /// Provide [getPasskeyCredentials] so that the user can be asked for their credentials.
+  Future<SorobanAuthorizationEntry>signAuthEntryWithPasskey(SorobanAuthorizationEntry entry,
+      Future<PublicKeyCredential> Function(
+      {required CredentialLoginOptions options}) getPasskeyCredentials ) async {
+
+
+    final payload = _getAuthPayload(entry);
+
+    var options = CredentialLoginOptions(
+      challenge: base64UrlEncode(payload.toList()),
+      rpId: rpId,
+      userVerification: "discouraged",
+    );
+
+    var passkeyCredentials = await getPasskeyCredentials(options: options);
+    if (passkeyCredentials.id == null) {
+      throw Exception('Invalid passkey login credentials: id is null');
+    }
+    final keyId = passkeyCredentials.id!;
+
+    final sigRawBase64 = passkeyCredentials.response?.signature;
+    if (sigRawBase64 == null) {
+      throw ArgumentError("Signature not found in credentials result");
+    }
+    final signatureRaw = base64Url.decode(base64Url.normalize(sigRawBase64));
+    final signature = _compactSignature(signatureRaw);
+
+    final authenticatorDataB64 = passkeyCredentials.response?.authenticatorData;
+    if (authenticatorDataB64 == null) {
+      throw ArgumentError("authenticatorData not found in credentials result");
+    }
+    final authenticatorData = base64Url.decode(base64Url.normalize(authenticatorDataB64));
+
+    final clientDataJsonB64 = passkeyCredentials.response?.clientDataJSON;
+    if (clientDataJsonB64 == null) {
+      throw ArgumentError("clientDataJSON not found in credentials result");
+    }
+    final clientDataJson = base64Url.decode(base64Url.normalize(clientDataJsonB64));
+
+    final signerKey = Secp256r1PasskeySignerKey(base64Url.decode(base64Url.normalize(keyId)));
+    final signerVal = Secp256r1Signature(authenticatorData, clientDataJson, signature);
+    final scEntry = XdrSCMapEntry(signerKey.toXdrSCVal(), signerVal.toXdrSCVal());
+
+    if (entry.credentials.addressCredentials == null) {
+      throw Exception("entry has no address credentials");
+    }
+
+    if (entry.credentials.addressCredentials!.signature.discriminant == XdrSCValType.SCV_VOID) {
+      entry.credentials.addressCredentials!.signature = XdrSCVal.forVec([XdrSCVal.forMap([scEntry])]);
+    } else if (entry.credentials.addressCredentials!.signature.discriminant == XdrSCValType.SCV_VEC) {
+      List<XdrSCMapEntry> newEntries = List<XdrSCMapEntry>.empty(growable: true);
+      var currentMap = entry.credentials.addressCredentials!.signature.vec!.firstOrNull;
+      if (currentMap is List<XdrSCMapEntry>) {
+        newEntries.addAll(currentMap as List<XdrSCMapEntry>);
+      }
+      newEntries.add(scEntry);
+      //Order the map by key
+      newEntries.sort(_sigSortComparison);
+
+      entry.credentials.addressCredentials!.signature.vec![0] = XdrSCVal.forMap(newEntries);
+
+    } else {
+      throw Exception("entry has invalid address credentials signature");
+    }
+
+    return entry;
+  }
+
+  int _sigSortComparison(XdrSCMapEntry a, XdrSCMapEntry b) {
+    final propertyA = a.key.vec![0].sym! + a.key.vec![1].toBase64EncodedXdrString();
+    final propertyB = b.key.vec![0].sym! + b.key.vec![1].toBase64EncodedXdrString();
+    return propertyA.compareTo(propertyB);
+  }
+
+  Uint8List _getAuthPayload(SorobanAuthorizationEntry entry) {
+    var addressCredentials = entry.credentials.addressCredentials;
+    if (addressCredentials == null) {
+      throw Exception("entry has no address credentials");
+    }
+
+    final preimage = XdrHashIDPreimage(XdrEnvelopeType.ENVELOPE_TYPE_SOROBAN_AUTHORIZATION);
+    XdrHashIDPreimageSorobanAuthorization preimageSa =
+    XdrHashIDPreimageSorobanAuthorization(
+        XdrHash(network.networkId!),
+        XdrInt64(addressCredentials.nonce),
+        XdrUint32(addressCredentials.signatureExpirationLedger),
+        entry.rootInvocation.toXdr());
+
+    preimage.sorobanAuthorization = preimageSa;
+
+    XdrDataOutputStream xdrOutputStream = XdrDataOutputStream();
+    XdrHashIDPreimage.encode(xdrOutputStream, preimage);
+    return Util.hash(Uint8List.fromList(xdrOutputStream.bytes));
+  }
+
   Future<Transaction> _createAndSignDeployTx(
       {required String credentialsId,
       required AuthAttestationResponse attestationResponse}) async {
@@ -400,6 +498,24 @@ class Ed25519PasskeySigner extends PasskeySigner {
     elements.add(XdrSCVal.forBytes(bytes));
     elements.addAll(_signerArgs());
     return XdrSCVal.forVec(elements);
+  }
+}
+
+class Secp256r1Signature {
+  Uint8List authenticatorData;
+  Uint8List clientDataJson;
+  Uint8List signature;
+
+
+  Secp256r1Signature(
+      this.authenticatorData, this.clientDataJson, this.signature);
+  
+  XdrSCVal toXdrSCVal() {
+    return XdrSCVal.forMap([
+      XdrSCMapEntry(XdrSCVal.forSymbol('authenticator_data'), XdrSCVal.forBytes(authenticatorData)),
+      XdrSCMapEntry(XdrSCVal.forSymbol('client_data_json'), XdrSCVal.forBytes(clientDataJson)),
+      XdrSCMapEntry(XdrSCVal.forSymbol('signature'), XdrSCVal.forBytes(signature)),
+    ]);
   }
 }
 
