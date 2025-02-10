@@ -280,7 +280,7 @@ class PasskeyKit {
       }) async {
 
     if (keyId == null) {
-      throw Exception("wallet must be connected. call connectWallet first");
+      throw Exception("wallet must be connected. Call connectWallet first");
     }
     final contractId = _deriveContractId(credentialsId: keyId!);
     final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
@@ -296,6 +296,52 @@ class PasskeyKit {
 
     return await _txForHostFunction(function);
 
+  }
+
+  Future<Transaction> addPolicy(Address policy, {
+    Map<Address, List<PasskeySignerKey>?>? limits,
+    PasskeySignerStorage? storage,
+    int? expiration
+  }) async {
+
+    if (keyId == null) {
+      throw Exception("wallet must be connected. call connectWallet first");
+    }
+    final contractId = _deriveContractId(credentialsId: keyId!);
+    var signer = PolicyPasskeySigner(policy,
+        expiration: expiration,
+        storage:  storage ?? PasskeySignerStorage.persistent);
+
+    final function = InvokeContractHostFunction(
+        contractId,
+        'add_signer',
+        arguments: [signer.toXdrSCVal()]
+    );
+
+    return await _txForHostFunction(function);
+  }
+
+  Future<Transaction> updatePolicy(Address policy, {
+    Map<Address, List<PasskeySignerKey>?>? limits,
+    PasskeySignerStorage? storage,
+    int? expiration
+  }) async {
+
+    if (keyId == null) {
+      throw Exception("wallet must be connected. call connectWallet first");
+    }
+    final contractId = _deriveContractId(credentialsId: keyId!);
+    var signer = PolicyPasskeySigner(policy,
+        expiration: expiration,
+        storage:  storage ?? PasskeySignerStorage.persistent);
+
+    final function = InvokeContractHostFunction(
+        contractId,
+        'update_signer',
+        arguments: [signer.toXdrSCVal()]
+    );
+
+    return await _txForHostFunction(function);
   }
 
   Future<Transaction> _txForHostFunction(HostFunction function) async {
