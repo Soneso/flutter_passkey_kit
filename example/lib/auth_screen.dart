@@ -6,6 +6,7 @@ import 'package:example/services/stellar_service.dart';
 import 'package:example/wallet_created_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_passkey_kit/flutter_passkey_kit.dart';
+import 'package:stellar_flutter_sdk/stellar_flutter_sdk.dart';
 import 'model/user_model.dart';
 import 'services/navigation_service.dart';
 import 'home_screen.dart';
@@ -162,6 +163,10 @@ class _AuthScreenState extends State<AuthScreen> {
       if (!response.success) {
         throw Exception("Error submitting transaction to stellar");
       }
+      log("Wallet created: ${user.contractId}");
+
+      await StellarService.fundWallet(user.contractId);
+      log("Wallet funded: ${user.contractId}");
 
       Navigator.of(NavigationService.navigatorKey.currentContext!).pushReplacement(
         MaterialPageRoute(

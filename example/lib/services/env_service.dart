@@ -27,6 +27,10 @@ class EnvService {
     return Network(getValue('network_passphrase'));
   }
 
+  static String getNativeSacCId() {
+    return getValue('native_sac_cid');
+  }
+
   static String getSubmitterSecret() {
     final value = dotenv.env['submitter_secret'];
     if (value == null) {

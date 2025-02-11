@@ -1,3 +1,4 @@
+import 'package:example/services/stellar_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,6 +19,7 @@ Future<void> main() async {
 
   await dotenv.load(fileName: ".env");
   UserModel? user = await UserModel.fromPrefs();
+  StellarService.sorobanServer.enableLogging = true;
   runApp(MyApp(user));
 }
 

@@ -1,14 +1,29 @@
 import 'package:clipboard/clipboard.dart';
 import 'package:example/services/navigation_service.dart';
+import 'package:example/services/stellar_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_screen.dart';
 import 'model/user_model.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   final UserModel user;
   const HomeScreen({super.key, required this.user});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+
+  static Future<void> logout() async {
+    var prefs = await SharedPreferences.getInstance();
+    prefs.remove('sp:contractId');
+    prefs.remove('sp:credentialsId');
+    prefs.remove('sp:username');
+  }
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  double? balance;
 
   @override
   Widget build(BuildContext context) {
@@ -21,7 +36,7 @@ class HomeScreen extends StatelessWidget {
         actions: [
           ElevatedButton.icon(
             onPressed: () async {
-              await logout();
+              await HomeScreen.logout();
               Navigator.of(NavigationService.navigatorKey.currentContext!).pushAndRemoveUntil(
                   MaterialPageRoute(
                       builder: (builder) => const AuthScreen(key: Key('auth_screen'))),
@@ -52,7 +67,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(height: 40),
               Text(
-                'Hello ${user.username}! You are connected to your wallet!',
+                'Hello ${widget.user.username}! You are connected to your wallet!',
                 style: const TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -65,7 +80,7 @@ class HomeScreen extends StatelessWidget {
                   Expanded(
                     flex: 7,
                     child: Text(
-                      user.contractId,
+                      widget.user.contractId,
                       style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
@@ -78,7 +93,30 @@ class HomeScreen extends StatelessWidget {
                       Icons.copy_outlined,
                       size: 20,
                     ),
-                    onPressed: () => _copyToClipboard(user.contractId),
+                    onPressed: () => _copyToClipboard(widget.user.contractId),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    flex: 7,
+                    child: Text(
+                      "Balance: ${balance == null ? "press refresh to load" : '$balance XLM'}",
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blue,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(
+                      Icons.refresh_outlined,
+                      size: 20,
+                    ),
+                    onPressed: () => _refreshBalance(),
                   ),
                 ],
               ),
@@ -89,16 +127,16 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  static Future<void> logout() async {
-    var prefs = await SharedPreferences.getInstance();
-    prefs.remove('sp:contractId');
-    prefs.remove('sp:credentialsId');
-    prefs.remove('sp:username');
-  }
-
   void _copyToClipboard(String text) async {
     await FlutterClipboard.copy(text);
     _showCopied();
+  }
+
+  void _refreshBalance() async {
+    var res = await StellarService.getBalance(widget.user.contractId);
+    setState(() {
+      balance = res;
+    });
   }
 
   void _showCopied() {
