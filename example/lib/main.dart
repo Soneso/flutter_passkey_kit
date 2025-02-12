@@ -1,8 +1,6 @@
 import 'package:example/services/stellar_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'home_screen.dart';
 import 'auth_screen.dart';
 import 'model/user_model.dart';
 import 'services/auth_service.dart';
@@ -32,10 +30,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       navigatorKey: NavigationService.navigatorKey,
-      home: user == null ?
-      const AuthScreen(
+      home: const AuthScreen(
         key: Key('auth_screen'),
-      ) : HomeScreen(user: user!),
+      ),
     );
   }
 }

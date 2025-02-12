@@ -83,8 +83,8 @@ class PasskeyKit {
   Future<ConnectWalletResponse> connectWallet(
       Future<PublicKeyCredential> Function(
               {required CredentialLoginOptions options})
-          getPasskeyCredentials, {String? keyId}) async {
-
+          getPasskeyCredentials,
+      {String? keyId}) async {
     String? username;
 
     if (keyId == null) {
@@ -101,7 +101,8 @@ class PasskeyKit {
       keyId = credentials.id;
       var userHandleB64 = credentials.response?.userHandle;
       if (userHandleB64 != null) {
-        username = _stringToBase64Url.decode(base64Url.normalize(userHandleB64));
+        username =
+            _stringToBase64Url.decode(base64Url.normalize(userHandleB64));
       }
     }
 
@@ -126,11 +127,11 @@ class PasskeyKit {
   /// Signs a SorobanAuthorizationEntry with passkey credentials. Make sure that the
   /// [entry] has addressCredentials with the expiration ledger sequence correctly set.
   /// Provide [getPasskeyCredentials] so that the user can be asked for their credentials.
-  Future<SorobanAuthorizationEntry>signAuthEntryWithPasskey(SorobanAuthorizationEntry entry,
+  Future<SorobanAuthorizationEntry> signAuthEntryWithPasskey(
+      SorobanAuthorizationEntry entry,
       Future<PublicKeyCredential> Function(
-      {required CredentialLoginOptions options}) getPasskeyCredentials ) async {
-
-
+              {required CredentialLoginOptions options})
+          getPasskeyCredentials) async {
     final payload = _getAuthPayload(entry);
 
     var options = CredentialLoginOptions(
@@ -156,27 +157,37 @@ class PasskeyKit {
     if (authenticatorDataB64 == null) {
       throw ArgumentError("authenticatorData not found in credentials result");
     }
-    final authenticatorData = base64Url.decode(base64Url.normalize(authenticatorDataB64));
+    final authenticatorData =
+        base64Url.decode(base64Url.normalize(authenticatorDataB64));
 
     final clientDataJsonB64 = passkeyCredentials.response?.clientDataJSON;
     if (clientDataJsonB64 == null) {
       throw ArgumentError("clientDataJSON not found in credentials result");
     }
-    final clientDataJson = base64Url.decode(base64Url.normalize(clientDataJsonB64));
+    final clientDataJson =
+        base64Url.decode(base64Url.normalize(clientDataJsonB64));
 
-    final signerKey = Secp256r1PasskeySignerKey(base64Url.decode(base64Url.normalize(keyId)));
-    final signerVal = Secp256r1Signature(authenticatorData, clientDataJson, signature);
-    final scEntry = XdrSCMapEntry(signerKey.toXdrSCVal(), signerVal.toXdrSCVal());
+    final scKey =
+        Secp256r1PasskeySignerKey(base64Url.decode(base64Url.normalize(keyId)));
+    final scVal =
+        Secp256r1Signature(authenticatorData, clientDataJson, signature);
+    final scEntry = XdrSCMapEntry(scKey.toXdrSCVal(), scVal.toXdrSCVal());
 
     if (entry.credentials.addressCredentials == null) {
       throw Exception("entry has no address credentials");
     }
 
-    if (entry.credentials.addressCredentials!.signature.discriminant == XdrSCValType.SCV_VOID) {
-      entry.credentials.addressCredentials!.signature = XdrSCVal.forVec([XdrSCVal.forMap([scEntry])]);
-    } else if (entry.credentials.addressCredentials!.signature.discriminant == XdrSCValType.SCV_VEC) {
-      List<XdrSCMapEntry> newEntries = List<XdrSCMapEntry>.empty(growable: true);
-      var currentMap = entry.credentials.addressCredentials!.signature.vec!.firstOrNull;
+    if (entry.credentials.addressCredentials!.signature.discriminant ==
+        XdrSCValType.SCV_VOID) {
+      entry.credentials.addressCredentials!.signature = XdrSCVal.forVec([
+        XdrSCVal.forMap([scEntry])
+      ]);
+    } else if (entry.credentials.addressCredentials!.signature.discriminant ==
+        XdrSCValType.SCV_VEC) {
+      List<XdrSCMapEntry> newEntries =
+          List<XdrSCMapEntry>.empty(growable: true);
+      var currentMap =
+          entry.credentials.addressCredentials!.signature.vec!.firstOrNull;
       if (currentMap is List<XdrSCMapEntry>) {
         newEntries.addAll(currentMap as List<XdrSCMapEntry>);
       }
@@ -184,8 +195,8 @@ class PasskeyKit {
       //Order the map by key
       newEntries.sort(_sigSortComparison);
 
-      entry.credentials.addressCredentials!.signature.vec![0] = XdrSCVal.forMap(newEntries);
-
+      entry.credentials.addressCredentials!.signature.vec![0] =
+          XdrSCVal.forMap(newEntries);
     } else {
       throw Exception("entry has invalid address credentials signature");
     }
@@ -193,161 +204,155 @@ class PasskeyKit {
     return entry;
   }
 
-  Future<Transaction> addSecp256r1(String keyId,
-      String publicKey, {
-        Map<Address, List<PasskeySignerKey>?>? limits,
-        PasskeySignerStorage? storage,
-        int? expiration
-      }) async {
+  /// Signs all SorobanAuthorization entries of the [transaction] with passkey credentials. Make sure that all
+  /// entries ave addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
+  /// to be set before signing. Provide [getPasskeyCredentials] so that the user can be asked for their credentials.
+  Future<void> signTxAuthEntries(Transaction transaction,
+      {required Future<PublicKeyCredential> Function(
+              {required CredentialLoginOptions options})
+          getPasskeyCredentials,
+      int? signaturesExpirationLedger}) async {
+    for (Operation op in transaction.operations) {
+      if (op is InvokeHostFunctionOperation) {
+        for (SorobanAuthorizationEntry authEntry in op.auth) {
+          if (signaturesExpirationLedger != null &&
+              authEntry.credentials.addressCredentials != null) {
+            authEntry.credentials.addressCredentials!
+                .signatureExpirationLedger = signaturesExpirationLedger;
+          }
+          await signAuthEntryWithPasskey(authEntry, getPasskeyCredentials);
+        }
+      }
+    }
+  }
 
+  Future<Transaction> addSecp256r1(
+    String txSourceAccountId,
+    String keyId,
+    String publicKey, {
+    Map<Address, List<PasskeySignerKey>?>? limits,
+    PasskeySignerStorage? storage,
+    int? expiration,
+  }) async {
     if (this.keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
     final contractId = _deriveContractId(credentialsId: this.keyId!);
-    var keyIdBytes =
-    base64Url.decode(base64Url.normalize(keyId));
+    var keyIdBytes = base64Url.decode(base64Url.normalize(keyId));
     final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
     var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes,
         expiration: expiration,
-        storage:  storage ?? PasskeySignerStorage.persistent);
+        storage: storage ?? PasskeySignerStorage.persistent);
 
-    final function = InvokeContractHostFunction(
-        contractId,
-        'add_signer',
-        arguments: [signer.toXdrSCVal()]
-    );
+    final function = InvokeContractHostFunction(contractId, 'add_signer',
+        arguments: [signer.toXdrSCVal()]);
 
-    return await _txForHostFunction(function);
-
+    return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> updateSecp256r1(String keyId,
-      String publicKey, {
-        Map<Address, List<PasskeySignerKey>?>? limits,
-        PasskeySignerStorage? storage,
-        int? expiration
-      }) async {
-
+  Future<Transaction> updateSecp256r1(
+      String txSourceAccountId, String keyId, String publicKey,
+      {Map<Address, List<PasskeySignerKey>?>? limits,
+      PasskeySignerStorage? storage,
+      int? expiration}) async {
     if (this.keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
     final contractId = _deriveContractId(credentialsId: this.keyId!);
-    var keyIdBytes =
-    base64Url.decode(base64Url.normalize(keyId));
+    var keyIdBytes = base64Url.decode(base64Url.normalize(keyId));
     final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
     var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes,
         expiration: expiration,
-        storage:  storage ?? PasskeySignerStorage.persistent);
+        storage: storage ?? PasskeySignerStorage.persistent);
 
-    final function = InvokeContractHostFunction(
-        contractId,
-        'update_signer',
-        arguments: [signer.toXdrSCVal()]
-    );
+    final function = InvokeContractHostFunction(contractId, 'update_signer',
+        arguments: [signer.toXdrSCVal()]);
 
-    return await _txForHostFunction(function);
-
+    return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> addEd25519(String publicKey, {
-        Map<Address, List<PasskeySignerKey>?>? limits,
-        PasskeySignerStorage? storage,
-        int? expiration
-      }) async {
-
+  Future<Transaction> addEd25519(
+    String txSourceAccountId,
+    String newSignerAccountId, {
+    Map<Address, List<PasskeySignerKey>?>? limits,
+    PasskeySignerStorage? storage,
+    int? expiration,
+  }) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
     final contractId = _deriveContractId(credentialsId: keyId!);
-    final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
+    final publicKeyBytes = StrKey.decodeStellarAccountId(newSignerAccountId);
     var signer = Ed25519PasskeySigner(publicKeyBytes,
         expiration: expiration,
-        storage:  storage ?? PasskeySignerStorage.persistent);
+        storage: storage ?? PasskeySignerStorage.persistent);
 
-    final function = InvokeContractHostFunction(
-        contractId,
-        'add_signer',
-        arguments: [signer.toXdrSCVal()]
-    );
+    final function = InvokeContractHostFunction(contractId, 'add_signer',
+        arguments: [signer.toXdrSCVal()]);
 
-    return await _txForHostFunction(function);
+    return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> updateEd25519(String publicKey, {
-        Map<Address, List<PasskeySignerKey>?>? limits,
-        PasskeySignerStorage? storage,
-        int? expiration
-      }) async {
-
+  Future<Transaction> updateEd25519(
+      String txSourceAccountId, String signerAccountId,
+      {Map<Address, List<PasskeySignerKey>?>? limits,
+      PasskeySignerStorage? storage,
+      int? expiration}) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. Call connectWallet first");
     }
     final contractId = _deriveContractId(credentialsId: keyId!);
-    final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
+    final publicKeyBytes = StrKey.decodeStellarAccountId(signerAccountId);
     var signer = Ed25519PasskeySigner(publicKeyBytes,
         expiration: expiration,
-        storage:  storage ?? PasskeySignerStorage.persistent);
+        storage: storage ?? PasskeySignerStorage.persistent);
 
-    final function = InvokeContractHostFunction(
-        contractId,
-        'update_signer',
-        arguments: [signer.toXdrSCVal()]
-    );
+    final function = InvokeContractHostFunction(contractId, 'update_signer',
+        arguments: [signer.toXdrSCVal()]);
 
-    return await _txForHostFunction(function);
-
+    return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> addPolicy(Address policy, {
-    Map<Address, List<PasskeySignerKey>?>? limits,
-    PasskeySignerStorage? storage,
-    int? expiration
-  }) async {
-
+  Future<Transaction> addPolicy(String txSourceAccountId, Address policy,
+      {Map<Address, List<PasskeySignerKey>?>? limits,
+      PasskeySignerStorage? storage,
+      int? expiration}) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
     final contractId = _deriveContractId(credentialsId: keyId!);
     var signer = PolicyPasskeySigner(policy,
         expiration: expiration,
-        storage:  storage ?? PasskeySignerStorage.persistent);
+        storage: storage ?? PasskeySignerStorage.persistent);
 
-    final function = InvokeContractHostFunction(
-        contractId,
-        'add_signer',
-        arguments: [signer.toXdrSCVal()]
-    );
+    final function = InvokeContractHostFunction(contractId, 'add_signer',
+        arguments: [signer.toXdrSCVal()]);
 
-    return await _txForHostFunction(function);
+    return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> updatePolicy(Address policy, {
-    Map<Address, List<PasskeySignerKey>?>? limits,
-    PasskeySignerStorage? storage,
-    int? expiration
-  }) async {
-
+  Future<Transaction> updatePolicy(String txSourceAccountId, Address policy,
+      {Map<Address, List<PasskeySignerKey>?>? limits,
+      PasskeySignerStorage? storage,
+      int? expiration}) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
     final contractId = _deriveContractId(credentialsId: keyId!);
     var signer = PolicyPasskeySigner(policy,
         expiration: expiration,
-        storage:  storage ?? PasskeySignerStorage.persistent);
+        storage: storage ?? PasskeySignerStorage.persistent);
 
-    final function = InvokeContractHostFunction(
-        contractId,
-        'update_signer',
-        arguments: [signer.toXdrSCVal()]
-    );
+    final function = InvokeContractHostFunction(contractId, 'update_signer',
+        arguments: [signer.toXdrSCVal()]);
 
-    return await _txForHostFunction(function);
+    return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> _txForHostFunction(HostFunction function) async {
+  Future<Transaction> _txForHostFunction(
+      String txSourceAccountId, HostFunction function) async {
     final operation = InvokeHostFuncOpBuilder(function).build();
-    final sourceAccountId = walletKeyPair.accountId;
-    final sourceAccount = await server.getAccount(sourceAccountId);
+    final sourceAccount = await server.getAccount(txSourceAccountId);
     if (sourceAccount == null) {
       var msg =
           "source account not found on the Stellar Network: $sourceAccount";
@@ -355,7 +360,8 @@ class PasskeyKit {
       throw Exception(msg);
     }
 
-    final transaction = TransactionBuilder(sourceAccount).addOperation(operation).build();
+    final transaction =
+        TransactionBuilder(sourceAccount).addOperation(operation).build();
     final request = SimulateTransactionRequest(transaction);
     final simulateResponse = await server.simulateTransaction(request);
 
@@ -371,8 +377,10 @@ class PasskeyKit {
   }
 
   int _sigSortComparison(XdrSCMapEntry a, XdrSCMapEntry b) {
-    final propertyA = a.key.vec![0].sym! + a.key.vec![1].toBase64EncodedXdrString();
-    final propertyB = b.key.vec![0].sym! + b.key.vec![1].toBase64EncodedXdrString();
+    final propertyA =
+        a.key.vec![0].sym! + a.key.vec![1].toBase64EncodedXdrString();
+    final propertyB =
+        b.key.vec![0].sym! + b.key.vec![1].toBase64EncodedXdrString();
     return propertyA.compareTo(propertyB);
   }
 
@@ -382,13 +390,14 @@ class PasskeyKit {
       throw Exception("entry has no address credentials");
     }
 
-    final preimage = XdrHashIDPreimage(XdrEnvelopeType.ENVELOPE_TYPE_SOROBAN_AUTHORIZATION);
+    final preimage =
+        XdrHashIDPreimage(XdrEnvelopeType.ENVELOPE_TYPE_SOROBAN_AUTHORIZATION);
     XdrHashIDPreimageSorobanAuthorization preimageSa =
-    XdrHashIDPreimageSorobanAuthorization(
-        XdrHash(network.networkId!),
-        XdrInt64(addressCredentials.nonce),
-        XdrUint32(addressCredentials.signatureExpirationLedger),
-        entry.rootInvocation.toXdr());
+        XdrHashIDPreimageSorobanAuthorization(
+            XdrHash(network.networkId!),
+            XdrInt64(addressCredentials.nonce),
+            XdrUint32(addressCredentials.signatureExpirationLedger),
+            entry.rootInvocation.toXdr());
 
     preimage.sorobanAuthorization = preimageSa;
 
@@ -510,16 +519,15 @@ class PasskeyKit {
 
   /// Derives the wallet contract id from the webauthn registration response credentials id or
   /// authentication response credentials id
-  String _deriveContractId(
-      {required String credentialsId}) {
-
-    var contractSalt =  _getContractSalt(credentialsId);
+  String _deriveContractId({required String credentialsId}) {
+    var contractSalt = _getContractSalt(credentialsId);
 
     final preimage =
         XdrHashIDPreimage(XdrEnvelopeType.ENVELOPE_TYPE_CONTRACT_ID);
     final contractIdPreimage = XdrContractIDPreimage(
         XdrContractIDPreimageType.CONTRACT_ID_PREIMAGE_FROM_ADDRESS);
-    contractIdPreimage.address = XdrSCAddress.forAccountId(walletKeyPair.accountId);
+    contractIdPreimage.address =
+        XdrSCAddress.forAccountId(walletKeyPair.accountId);
     contractIdPreimage.salt = XdrUint256(contractSalt);
     final preimageCID = XdrHashIDPreimageContractID(
         XdrHash(network.networkId!), contractIdPreimage);
@@ -658,9 +666,9 @@ class PolicyPasskeySigner extends PasskeySigner {
 }
 
 class Ed25519PasskeySigner extends PasskeySigner {
-  Uint8List bytes; // todo rename
+  Uint8List publicKeyBytes;
 
-  Ed25519PasskeySigner(this.bytes,
+  Ed25519PasskeySigner(this.publicKeyBytes,
       {int? expiration,
       Map<Address, List<PasskeySignerKey>?>? limits,
       PasskeySignerStorage? storage})
@@ -671,7 +679,7 @@ class Ed25519PasskeySigner extends PasskeySigner {
   XdrSCVal toXdrSCVal() {
     List<XdrSCVal> elements = List<XdrSCVal>.empty(growable: true);
     elements.add(XdrSCVal.forSymbol(type.value));
-    elements.add(XdrSCVal.forBytes(bytes));
+    elements.add(XdrSCVal.forBytes(publicKeyBytes));
     elements.addAll(_signerArgs());
     return XdrSCVal.forVec(elements);
   }
@@ -682,15 +690,20 @@ class Secp256r1Signature {
   Uint8List clientDataJson;
   Uint8List signature;
 
-
   Secp256r1Signature(
       this.authenticatorData, this.clientDataJson, this.signature);
-  
+
   XdrSCVal toXdrSCVal() {
-    return XdrSCVal.forMap([
-      XdrSCMapEntry(XdrSCVal.forSymbol('authenticator_data'), XdrSCVal.forBytes(authenticatorData)),
-      XdrSCMapEntry(XdrSCVal.forSymbol('client_data_json'), XdrSCVal.forBytes(clientDataJson)),
-      XdrSCMapEntry(XdrSCVal.forSymbol('signature'), XdrSCVal.forBytes(signature)),
+    return XdrSCVal.forVec([
+      XdrSCVal.forSymbol("Secp256r1"),
+      XdrSCVal.forMap([
+        XdrSCMapEntry(XdrSCVal.forSymbol('authenticator_data'),
+            XdrSCVal.forBytes(authenticatorData)),
+        XdrSCMapEntry(XdrSCVal.forSymbol('client_data_json'),
+            XdrSCVal.forBytes(clientDataJson)),
+        XdrSCMapEntry(
+            XdrSCVal.forSymbol('signature'), XdrSCVal.forBytes(signature)),
+      ])
     ]);
   }
 }

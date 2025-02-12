@@ -172,6 +172,7 @@ class _WalletCreatedScreenState extends State<WalletCreatedScreen> {
         MaterialPageRoute(
           builder: (context) => HomeScreen(
             user: user,
+            kit: kit
           ),
         ),
       );

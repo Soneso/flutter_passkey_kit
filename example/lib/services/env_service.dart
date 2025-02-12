@@ -31,6 +31,10 @@ class EnvService {
     return getValue('native_sac_cid');
   }
 
+  static String getEd25519SignerSecret() {
+    return getValue('ed25519Signer_secret');
+  }
+
   static String getSubmitterSecret() {
     final value = dotenv.env['submitter_secret'];
     if (value == null) {

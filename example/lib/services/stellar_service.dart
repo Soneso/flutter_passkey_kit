@@ -12,11 +12,19 @@ class StellarService {
   static Future<SubmitTransactionResponse> feeBump(Transaction innerTx) async {
     var submitterAccountId = submitterKeyPair.accountId;
     FeeBumpTransaction feeBump = FeeBumpTransactionBuilder(innerTx)
-        .setBaseFee(innerTx.fee + 100)
+        .setBaseFee(innerTx.fee + 1000)
         .setFeeAccount(submitterAccountId)
         .build();
     feeBump.sign(submitterKeyPair, network);
     return await stellarSDK.submitFeeBumpTransaction(feeBump);
+  }
+
+  static Future<int>getLatestLedgerSequence() async {
+    return (await sorobanServer.getLatestLedger()).sequence!;
+  }
+
+  static Future<SimulateTransactionResponse> simulateSorobanTx(Transaction tx) async {
+    return await sorobanServer.simulateTransaction(SimulateTransactionRequest(tx));
   }
 
   static Future<void> fundWallet(String contractId) async {
@@ -55,18 +63,20 @@ class StellarService {
     transaction.addResourceFee(simulateResponse.minResourceFee!);
     transaction.setSorobanAuth(simulateResponse.sorobanAuth);
     transaction.sign(submitterKeyPair, network);
-    final sendResponse = await sorobanServer.sendTransaction(transaction);
-    if (sendResponse.hash == null) {
+    return await sendAndCheckSorobanTx(transaction);
+  }
+
+  static Future<GetTransactionResponse> sendAndCheckSorobanTx(Transaction tx) async {
+    final sendResponse = await sorobanServer.sendTransaction(tx);
+    if (sendResponse.status == SendTransactionResponse.STATUS_ERROR || sendResponse.hash == null) {
       throw Exception("Error sending tx to soroban: no transaction hash in response");
     }
-
     final txResponse = await _pollTxStatus(sendResponse.hash!);
     if (GetTransactionResponse.STATUS_SUCCESS != txResponse.status) {
       throw Exception("Error sending tx to soroban: tx not success");
     }
     return txResponse;
   }
-
   // poll until success or error
   static Future<GetTransactionResponse> _pollTxStatus(String transactionId) async {
     var status = GetTransactionResponse.STATUS_NOT_FOUND;
@@ -74,14 +84,7 @@ class StellarService {
     while (status == GetTransactionResponse.STATUS_NOT_FOUND) {
       await Future.delayed(const Duration(seconds: 3), () {});
       transactionResponse = await sorobanServer.getTransaction(transactionId);
-      assert(transactionResponse.error == null);
       status = transactionResponse.status!;
-      if (status == GetTransactionResponse.STATUS_FAILED) {
-        assert(transactionResponse.resultXdr != null);
-        assert(false);
-      } else if (status == GetTransactionResponse.STATUS_SUCCESS) {
-        assert(transactionResponse.resultXdr != null);
-      }
     }
     return transactionResponse!;
   }
