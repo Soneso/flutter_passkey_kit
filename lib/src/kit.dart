@@ -30,54 +30,17 @@ class PasskeyKit {
       Future<PublicKeyCredential> Function(
               {required CredentialCreationOptions options})
           createPasskeyCredentials) async {
-    final authenticatorSelectionCriteria = AuthenticatorSelectionCriteria(
-        requireResidentKey: false,
-        residentKey: "preferred",
-        userVerification: "discouraged",
-        authenticatorAttachment: "platform");
-
-    var now = DateTime.now();
-    var random = Random();
-
-    final user = User(
-        id: _stringToBase64Url.encode(
-            "$userName:${now.millisecondsSinceEpoch}:${random.nextDouble()}"),
-        name: userName,
-        displayName: "$userName - ${now.toLocal()}");
-
-    final credentialCreationOptions = CredentialCreationOptions(
-      challenge: _stringToBase64Url.encode(_challengeStr),
-      rp: Rp(name: appName, id: rpId),
-      user: user,
-      authenticatorSelection: authenticatorSelectionCriteria,
-      pubKeyCredParams: [
-        PublicKeyCredentialParameters(alg: -7, type: "public-key")
-      ],
-      attestation: "none",
-      excludeCredentials: [],
-    );
-
-    final createdCredentials =
-        await createPasskeyCredentials(options: credentialCreationOptions);
-
-    if (createdCredentials.id == null) {
-      throw Exception("Created credentials have no id");
-    }
-
-    final credentialsId = createdCredentials.id!;
-
-    if (createdCredentials.response == null) {
-      return throw Exception(
-          "Could not extract attestation response from created credentials");
-    }
+    final createKeyResponse =
+        await createKey(appName, userName, createPasskeyCredentials);
 
     var signedTx = await _createAndSignDeployTx(
-        credentialsId: credentialsId,
-        attestationResponse: createdCredentials.response!);
+        credentialsId: createKeyResponse.keyId,
+        publicKey: base64Url.decode(base64Url.normalize(createKeyResponse.publicKey)));
 
-    final contractId = _deriveContractId(credentialsId: credentialsId);
+    final contractId =
+        _deriveContractId(credentialsId: createKeyResponse.keyId);
 
-    return CreateWalletResponse(credentialsId, contractId, signedTx);
+    return CreateWalletResponse(createKeyResponse.keyId, contractId, signedTx);
   }
 
   Future<ConnectWalletResponse> connectWallet(
@@ -122,6 +85,63 @@ class PasskeyKit {
     this.keyId = keyId;
 
     return ConnectWalletResponse(keyId, contractId, username: username);
+  }
+
+  Future<CreateKeyResponse> createKey(
+      String appName,
+      String userName,
+      Future<PublicKeyCredential> Function(
+              {required CredentialCreationOptions options})
+          createPasskeyCredentials) async {
+    final authenticatorSelectionCriteria = AuthenticatorSelectionCriteria(
+        requireResidentKey: false,
+        residentKey: "preferred",
+        userVerification: "discouraged",
+        authenticatorAttachment: "platform");
+
+    var now = DateTime.now();
+    var random = Random();
+
+    final user = User(
+        id: _stringToBase64Url.encode(
+            "$userName:${now.millisecondsSinceEpoch}:${random.nextDouble()}"),
+        name: userName,
+        displayName: "$userName - ${now.toLocal()}");
+
+    final credentialCreationOptions = CredentialCreationOptions(
+      challenge: _stringToBase64Url.encode(_challengeStr),
+      rp: Rp(name: appName, id: rpId),
+      user: user,
+      authenticatorSelection: authenticatorSelectionCriteria,
+      pubKeyCredParams: [
+        PublicKeyCredentialParameters(alg: -7, type: "public-key")
+      ],
+      attestation: "none",
+      excludeCredentials: [],
+    );
+
+    final createdCredentials =
+        await createPasskeyCredentials(options: credentialCreationOptions);
+
+    if (createdCredentials.id == null) {
+      throw Exception("Created credentials have no id");
+    }
+
+    final credentialsId = createdCredentials.id!;
+
+    if (createdCredentials.response == null) {
+      return throw Exception(
+          "Could not extract attestation response from created credentials");
+    }
+
+    final publicKey = getPublicKey(createdCredentials.response!);
+
+    if (publicKey == null) {
+      return throw Exception(
+          "Could not extract public key from created credentials");
+    }
+
+    return CreateKeyResponse(credentialsId, base64UrlEncode(publicKey.toList()));
   }
 
   /// Signs a SorobanAuthorizationEntry with passkey credentials. Make sure that the
@@ -182,11 +202,9 @@ class PasskeyKit {
   /// [entry] has addressCredentials with the expiration ledger sequence correctly set.
   /// Provide [signerKeyPair] including the private key for signing.
   Future<SorobanAuthorizationEntry> signAuthEntryWithKeyPair(
-      SorobanAuthorizationEntry entry,
-      KeyPair signerKeyPair) async {
-
-    if(signerKeyPair.privateKey == null) {
-      throw Exception ("Invalid signer keypair. Must contain private key!");
+      SorobanAuthorizationEntry entry, KeyPair signerKeyPair) async {
+    if (signerKeyPair.privateKey == null) {
+      throw Exception("Invalid signer keypair. Must contain private key!");
     }
     final payload = _getAuthPayload(entry);
 
@@ -201,7 +219,8 @@ class PasskeyKit {
     return entry;
   }
 
-  _addSignatureToEntry(SorobanAuthorizationEntry entry, XdrSCMapEntry signature ) {
+  _addSignatureToEntry(
+      SorobanAuthorizationEntry entry, XdrSCMapEntry signature) {
     if (entry.credentials.addressCredentials == null) {
       throw Exception("entry has no address credentials");
     }
@@ -214,7 +233,7 @@ class PasskeyKit {
     } else if (entry.credentials.addressCredentials!.signature.discriminant ==
         XdrSCValType.SCV_VEC) {
       List<XdrSCMapEntry> newEntries =
-      List<XdrSCMapEntry>.empty(growable: true);
+          List<XdrSCMapEntry>.empty(growable: true);
       var currentMap =
           entry.credentials.addressCredentials!.signature.vec!.firstOrNull;
       if (currentMap is List<XdrSCMapEntry>) {
@@ -257,8 +276,7 @@ class PasskeyKit {
   /// entries ave addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
   /// to be set before signing. Provide [signerKeypair] including the private key for signing.
   Future<void> signTxAuthEntriesWithKeyPair(Transaction transaction,
-      {required KeyPair signerKeypair,
-        int? signaturesExpirationLedger}) async {
+      {required KeyPair signerKeypair, int? signaturesExpirationLedger}) async {
     for (Operation op in transaction.operations) {
       if (op is InvokeHostFunctionOperation) {
         for (SorobanAuthorizationEntry authEntry in op.auth) {
@@ -427,7 +445,8 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> removePolicy(String txSourceAccountId, Address policy) async {
+  Future<Transaction> removePolicy(
+      String txSourceAccountId, Address policy) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
@@ -498,16 +517,9 @@ class PasskeyKit {
   }
 
   Future<Transaction> _createAndSignDeployTx(
-      {required String credentialsId,
-      required AuthAttestationResponse attestationResponse}) async {
+      {required String credentialsId, required Uint8List publicKey}) async {
     final server = SorobanServer(rpcUrl);
     server.enableLogging = true;
-
-    final publicKey = getPublicKey(attestationResponse);
-
-    if (publicKey == null) {
-      throw Exception("Could not extract public key from attestation response");
-    }
 
     final sourceAccountId = walletKeyPair.accountId;
     final sourceAccount = await server.getAccount(sourceAccountId);
@@ -684,6 +696,13 @@ class CreateWalletResponse {
   Transaction signedTx;
 
   CreateWalletResponse(this.keyId, this.contractId, this.signedTx);
+}
+
+class CreateKeyResponse {
+  String keyId;
+  String publicKey;
+
+  CreateKeyResponse(this.keyId, this.publicKey);
 }
 
 class ConnectWalletResponse {
@@ -867,10 +886,8 @@ class Ed25519Signature {
   Ed25519Signature(this.signature);
 
   XdrSCVal toXdrSCVal() {
-    return XdrSCVal.forVec([
-      XdrSCVal.forSymbol("Ed25519"),
-      XdrSCVal.forBytes(signature)
-    ]);
+    return XdrSCVal.forVec(
+        [XdrSCVal.forSymbol("Ed25519"), XdrSCVal.forBytes(signature)]);
   }
 }
 

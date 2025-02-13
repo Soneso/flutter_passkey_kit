@@ -31,7 +31,9 @@ class _HomeScreenState extends State<HomeScreen> {
   double? balance;
   bool isLoadingBalance = false;
   bool isAddingEd25519Signer = false;
+  bool isAddingSecp256r1Signer = false;
   bool isEd25519Transferring = false;
+  String? keyName;
 
   @override
   Widget build(BuildContext context) {
@@ -68,14 +70,8 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.start,
             children: <Widget>[
-              const Icon(
-                Icons.check,
-                color: Colors.green,
-                size: 10,
-              ),
-              const SizedBox(height: 20),
               const Text(
                 'You are connected to your wallet!',
                 style: TextStyle(
@@ -84,14 +80,17 @@ class _HomeScreenState extends State<HomeScreen> {
                   color: Colors.deepPurple,
                 ),
               ),
-              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 25),
               _contractIdRow(),
-              const SizedBox(height: 16),
+              const SizedBox(height: 5),
               _balanceRow(),
-              const SizedBox(height: 16),
+              const Divider(),
               _ed25519AddRow(),
-              const SizedBox(height: 16),
+              const SizedBox(height: 5),
               _ed25519TransferRow(),
+              const Divider(),
+              _secp256r1AddRow(),
             ],
           ),
         ),
@@ -104,21 +103,21 @@ class _HomeScreenState extends State<HomeScreen> {
       isEd25519Transferring = true;
     });
     try {
+      final transaction =
+          await StellarService.buildEd25519TransferTx(widget.user.contractId);
 
-      final transaction = await StellarService.buildEd25519TransferTx(widget.user.contractId);
-
-      final signerKeypair = KeyPair.fromSecretSeed(EnvService.getEd25519SignerSecret());
+      final signerKeypair =
+          KeyPair.fromSecretSeed(EnvService.getEd25519SignerSecret());
 
       final signaturesExpirationLedger =
           await StellarService.getLatestLedgerSequence() + 60;
-
 
       await widget.kit.signTxAuthEntriesWithKeyPair(transaction,
           signerKeypair: signerKeypair,
           signaturesExpirationLedger: signaturesExpirationLedger);
 
       final simulateResponse =
-      await StellarService.simulateSorobanTx(transaction);
+          await StellarService.simulateSorobanTx(transaction);
       if (simulateResponse.resultError != null) {
         throw Exception(
             "could not simulate signed transaction: ${simulateResponse.resultError!}");
@@ -186,6 +185,57 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _addSecp256r1Signer() async {
+    if (keyName == null) {
+      _showErrMsg('Please enter a name for the signer');
+      return;
+    }
+    setState(() {
+      isAddingSecp256r1Signer = true;
+    });
+    try {
+      final createKeyResponse = await widget.kit.createKey(
+          'FK-Example', keyName!, AuthService.createPasskeyCredentials);
+
+      final sequence = await StellarService.getLatestLedgerSequence();
+
+      var transaction = await widget.kit.addSecp256r1(
+          StellarService.submitterKeyPair.accountId,
+          createKeyResponse.keyId,
+          createKeyResponse.publicKey,
+          storage: PasskeySignerStorage.temporary,
+          expiration: sequence + 518400);
+
+      final signaturesExpirationLedger = sequence + 60;
+      await widget.kit.signTxAuthEntriesWithPasskey(transaction,
+          getPasskeyCredentials: AuthService.getPasskeyCredentials,
+          signaturesExpirationLedger: signaturesExpirationLedger);
+
+      final simulateResponse =
+          await StellarService.simulateSorobanTx(transaction);
+      if (simulateResponse.resultError != null) {
+        throw Exception(
+            "could not simulate signed transaction: ${simulateResponse.resultError!}");
+      }
+
+      transaction.sorobanTransactionData = simulateResponse.transactionData;
+      transaction.addResourceFee(simulateResponse.minResourceFee!);
+      transaction.setSorobanAuth(simulateResponse.sorobanAuth);
+      transaction.sign(StellarService.submitterKeyPair, StellarService.network);
+
+      await StellarService.sendAndCheckSorobanTx(transaction);
+
+      _showMsg("Signer added!");
+    } catch (e) {
+      _showErrMsg('Error: $e');
+      log('Error: $e');
+    } finally {
+      setState(() {
+        isAddingSecp256r1Signer = false;
+      });
+    }
+  }
+
   Row _contractIdRow() {
     return Row(
       children: [
@@ -210,37 +260,19 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     );
   }
+
   Row _balanceRow() {
     return Row(
       children: [
-        Expanded(
-          flex: 7,
-          child: Text(
-            "Balance: ${isLoadingBalance ? 'loading ...' : (balance == null ? 'press refresh to load' : '$balance XLM')}",
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
-            ),
-          ),
-        ),
+        _rowLabel("Balance: ${isLoadingBalance ? 'loading ...' : (balance == null ? 'press refresh to load' : '$balance XLM')}"),
         IconButton(
           icon: isLoadingBalance
-              ? const SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(
-              valueColor:
-              AlwaysStoppedAnimation<Color>(Colors.blue),
-              strokeWidth: 2,
-            ),
-          )
+              ? _loadingIndicator()
               : const Icon(
-            Icons.refresh_outlined,
-            size: 20,
-          ),
-          onPressed: () =>
-          isLoadingBalance ? null : _refreshBalance(),
+                  Icons.refresh_outlined,
+                  size: 20,
+                ),
+          onPressed: () => isLoadingBalance ? null : _refreshBalance(),
         ),
       ],
     );
@@ -249,31 +281,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Row _ed25519AddRow() {
     return Row(
       children: [
-        const Expanded(
-          flex: 7,
-          child: Text(
-            "Add Ed25519 Signer",
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
-            ),
-          ),
-        ),
+        _rowLabel("Add Ed25519 Signer"),
         IconButton(
           icon: isAddingEd25519Signer
-              ? const SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
-              strokeWidth: 2,
-            ),
-          )
+              ? _loadingIndicator()
               : const Icon(
-            Icons.add,
-            size: 20,
-          ),
+                  Icons.add,
+                  size: 20,
+                ),
           onPressed: () => isAddingEd25519Signer ? null : _addEd25519Signer(),
         ),
       ],
@@ -283,34 +298,75 @@ class _HomeScreenState extends State<HomeScreen> {
   Row _ed25519TransferRow() {
     return Row(
       children: [
-        const Expanded(
-          flex: 7,
-          child: Text(
-            "Ed25519 Transfer",
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
-            ),
-          ),
-        ),
+        _rowLabel("Ed25519 Transfer"),
         IconButton(
           icon: isEd25519Transferring
-              ? const SizedBox(
-            width: 24,
-            height: 24,
-            child: CircularProgressIndicator(
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
-              strokeWidth: 2,
-            ),
-          )
+              ? _loadingIndicator()
               : const Icon(
-            Icons.arrow_forward,
-            size: 20,
-          ),
+                  Icons.arrow_forward,
+                  size: 20,
+                ),
           onPressed: () => isEd25519Transferring ? null : _ed25519Transfer(),
         ),
       ],
+    );
+  }
+
+  Row _secp256r1AddRow() {
+    return Row(
+      children: [
+        Expanded(
+          flex: 7,
+          child: TextField(
+            onChanged: (value) {
+              setState(() {
+                keyName = value;
+              });
+            },
+            decoration: const InputDecoration(
+              hintText: 'Add Secp256r1 Signer',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.person, color: Colors.deepPurple),
+            ),
+          ),
+        ),
+
+        IconButton(
+          icon: isAddingSecp256r1Signer
+              ? _loadingIndicator()
+              : const Icon(
+                  Icons.add,
+                  size: 20,
+                ),
+          onPressed: () =>
+              isAddingSecp256r1Signer ? null : _addSecp256r1Signer(),
+        ),
+      ],
+    );
+  }
+
+  Widget _rowLabel(String text) {
+    return Expanded(
+      flex: 7,
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.blue,
+        ),
+      ),
+    );
+  }
+  
+  Widget _loadingIndicator() {
+    return const SizedBox(
+      width: 24,
+      height: 24,
+      child: CircularProgressIndicator(
+        valueColor: AlwaysStoppedAnimation<Color>(Colors.blue),
+        strokeWidth: 2,
+      ),
     );
   }
 
