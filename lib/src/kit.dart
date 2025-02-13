@@ -173,6 +173,35 @@ class PasskeyKit {
         Secp256r1Signature(authenticatorData, clientDataJson, signature);
     final scEntry = XdrSCMapEntry(scKey.toXdrSCVal(), scVal.toXdrSCVal());
 
+    _addSignatureToEntry(entry, scEntry);
+
+    return entry;
+  }
+
+  /// Signs a SorobanAuthorizationEntry with the [signerKeyPair] as an ed25519 signer. Make sure that the
+  /// [entry] has addressCredentials with the expiration ledger sequence correctly set.
+  /// Provide [signerKeyPair] including the private key for signing.
+  Future<SorobanAuthorizationEntry> signAuthEntryWithKeyPair(
+      SorobanAuthorizationEntry entry,
+      KeyPair signerKeyPair) async {
+
+    if(signerKeyPair.privateKey == null) {
+      throw Exception ("Invalid signer keypair. Must contain private key!");
+    }
+    final payload = _getAuthPayload(entry);
+
+    final signature = signerKeyPair.sign(payload);
+
+    final scKey = Ed25519PasskeySignerKey(signerKeyPair.publicKey);
+    final scVal = Ed25519Signature(signature);
+    final scEntry = XdrSCMapEntry(scKey.toXdrSCVal(), scVal.toXdrSCVal());
+
+    _addSignatureToEntry(entry, scEntry);
+
+    return entry;
+  }
+
+  _addSignatureToEntry(SorobanAuthorizationEntry entry, XdrSCMapEntry signature ) {
     if (entry.credentials.addressCredentials == null) {
       throw Exception("entry has no address credentials");
     }
@@ -180,18 +209,18 @@ class PasskeyKit {
     if (entry.credentials.addressCredentials!.signature.discriminant ==
         XdrSCValType.SCV_VOID) {
       entry.credentials.addressCredentials!.signature = XdrSCVal.forVec([
-        XdrSCVal.forMap([scEntry])
+        XdrSCVal.forMap([signature])
       ]);
     } else if (entry.credentials.addressCredentials!.signature.discriminant ==
         XdrSCValType.SCV_VEC) {
       List<XdrSCMapEntry> newEntries =
-          List<XdrSCMapEntry>.empty(growable: true);
+      List<XdrSCMapEntry>.empty(growable: true);
       var currentMap =
           entry.credentials.addressCredentials!.signature.vec!.firstOrNull;
       if (currentMap is List<XdrSCMapEntry>) {
         newEntries.addAll(currentMap as List<XdrSCMapEntry>);
       }
-      newEntries.add(scEntry);
+      newEntries.add(signature);
       //Order the map by key
       newEntries.sort(_sigSortComparison);
 
@@ -200,14 +229,12 @@ class PasskeyKit {
     } else {
       throw Exception("entry has invalid address credentials signature");
     }
-
-    return entry;
   }
 
   /// Signs all SorobanAuthorization entries of the [transaction] with passkey credentials. Make sure that all
   /// entries ave addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
   /// to be set before signing. Provide [getPasskeyCredentials] so that the user can be asked for their credentials.
-  Future<void> signTxAuthEntries(Transaction transaction,
+  Future<void> signTxAuthEntriesWithPasskey(Transaction transaction,
       {required Future<PublicKeyCredential> Function(
               {required CredentialLoginOptions options})
           getPasskeyCredentials,
@@ -221,6 +248,26 @@ class PasskeyKit {
                 .signatureExpirationLedger = signaturesExpirationLedger;
           }
           await signAuthEntryWithPasskey(authEntry, getPasskeyCredentials);
+        }
+      }
+    }
+  }
+
+  /// Signs all SorobanAuthorization entries of the [transaction] with the given [signerKeypair] as as an ed25519 signer. Make sure that all
+  /// entries ave addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
+  /// to be set before signing. Provide [signerKeypair] including the private key for signing.
+  Future<void> signTxAuthEntriesWithKeyPair(Transaction transaction,
+      {required KeyPair signerKeypair,
+        int? signaturesExpirationLedger}) async {
+    for (Operation op in transaction.operations) {
+      if (op is InvokeHostFunctionOperation) {
+        for (SorobanAuthorizationEntry authEntry in op.auth) {
+          if (signaturesExpirationLedger != null &&
+              authEntry.credentials.addressCredentials != null) {
+            authEntry.credentials.addressCredentials!
+                .signatureExpirationLedger = signaturesExpirationLedger;
+          }
+          await signAuthEntryWithKeyPair(authEntry, signerKeypair);
         }
       }
     }
@@ -729,29 +776,6 @@ class Ed25519PasskeySigner extends PasskeySigner {
   }
 }
 
-class Secp256r1Signature {
-  Uint8List authenticatorData;
-  Uint8List clientDataJson;
-  Uint8List signature;
-
-  Secp256r1Signature(
-      this.authenticatorData, this.clientDataJson, this.signature);
-
-  XdrSCVal toXdrSCVal() {
-    return XdrSCVal.forVec([
-      XdrSCVal.forSymbol("Secp256r1"),
-      XdrSCVal.forMap([
-        XdrSCMapEntry(XdrSCVal.forSymbol('authenticator_data'),
-            XdrSCVal.forBytes(authenticatorData)),
-        XdrSCMapEntry(XdrSCVal.forSymbol('client_data_json'),
-            XdrSCVal.forBytes(clientDataJson)),
-        XdrSCMapEntry(
-            XdrSCVal.forSymbol('signature'), XdrSCVal.forBytes(signature)),
-      ])
-    ]);
-  }
-}
-
 class Secp256r1PasskeySigner extends PasskeySigner {
   Uint8List keyId;
   Uint8List publicKey;
@@ -793,13 +817,13 @@ class PolicyPasskeySignerKey extends PasskeySignerKey {
 }
 
 class Ed25519PasskeySignerKey extends PasskeySignerKey {
-  Uint8List bytesN;
-  Ed25519PasskeySignerKey(this.bytesN) : super(PasskeySignerType.ed25519);
+  Uint8List publicKey;
+  Ed25519PasskeySignerKey(this.publicKey) : super(PasskeySignerType.ed25519);
 
   @override
   XdrSCVal toXdrSCVal() {
     return XdrSCVal.forVec(
-        [XdrSCVal.forSymbol(type.value), XdrSCVal.forBytes(bytesN)]);
+        [XdrSCVal.forSymbol(type.value), XdrSCVal.forBytes(publicKey)]);
   }
 }
 
@@ -811,6 +835,42 @@ class Secp256r1PasskeySignerKey extends PasskeySignerKey {
   XdrSCVal toXdrSCVal() {
     return XdrSCVal.forVec(
         [XdrSCVal.forSymbol(type.value), XdrSCVal.forBytes(keyId)]);
+  }
+}
+
+class Secp256r1Signature {
+  Uint8List authenticatorData;
+  Uint8List clientDataJson;
+  Uint8List signature;
+
+  Secp256r1Signature(
+      this.authenticatorData, this.clientDataJson, this.signature);
+
+  XdrSCVal toXdrSCVal() {
+    return XdrSCVal.forVec([
+      XdrSCVal.forSymbol("Secp256r1"),
+      XdrSCVal.forMap([
+        XdrSCMapEntry(XdrSCVal.forSymbol('authenticator_data'),
+            XdrSCVal.forBytes(authenticatorData)),
+        XdrSCMapEntry(XdrSCVal.forSymbol('client_data_json'),
+            XdrSCVal.forBytes(clientDataJson)),
+        XdrSCMapEntry(
+            XdrSCVal.forSymbol('signature'), XdrSCVal.forBytes(signature)),
+      ])
+    ]);
+  }
+}
+
+class Ed25519Signature {
+  Uint8List signature;
+
+  Ed25519Signature(this.signature);
+
+  XdrSCVal toXdrSCVal() {
+    return XdrSCVal.forVec([
+      XdrSCVal.forSymbol("Ed25519"),
+      XdrSCVal.forBytes(signature)
+    ]);
   }
 }
 

@@ -28,7 +28,6 @@ class StellarService {
   }
 
   static Future<void> fundWallet(String contractId) async {
-
     final from = Address.forAccountId(submitterKeyPair.accountId).toXdrSCVal();
     final to = Address.forContractId(contractId).toXdrSCVal();
     final amount = XdrSCVal.forI128Parts(0, 10 * 10000000); // 10 XLM
@@ -87,5 +86,26 @@ class StellarService {
       status = transactionResponse.status!;
     }
     return transactionResponse!;
+  }
+
+  static Future<Transaction> buildEd25519TransferTx(String contractId) async {
+    final from = Address.forContractId(contractId).toXdrSCVal();
+    final to = Address.forAccountId(submitterKeyPair.accountId).toXdrSCVal();
+    final amount = XdrSCVal.forI128Parts(0, 1 * 10000000); // 1 XLM
+    final function = InvokeContractHostFunction(nativeSacCId, "transfer", arguments: [from, to, amount]);
+    final sourceAccountId = submitterKeyPair.accountId;
+    final sourceAccount = await stellarSDK.accounts.account(sourceAccountId);
+    final operation = InvokeHostFuncOpBuilder(function).build();
+    final transaction = TransactionBuilder(sourceAccount).addOperation(operation).build();
+    final request = SimulateTransactionRequest(transaction);
+    final simulateResponse = await sorobanServer.simulateTransaction(request);
+    if (simulateResponse.resultError != null) {
+      throw Exception("Could not simulate transaction");
+    }
+
+    transaction.sorobanTransactionData = simulateResponse.transactionData;
+    transaction.addResourceFee(simulateResponse.minResourceFee!);
+    transaction.setSorobanAuth(simulateResponse.sorobanAuth);
+    return transaction;
   }
 }
