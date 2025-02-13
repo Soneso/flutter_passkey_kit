@@ -271,6 +271,22 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
+  Future<Transaction> removeSecp256r1(
+      String txSourceAccountId, String keyId, String publicKey) async {
+    if (this.keyId == null) {
+      throw Exception("wallet must be connected. call connectWallet first");
+    }
+    final contractId = _deriveContractId(credentialsId: this.keyId!);
+    var keyIdBytes = base64Url.decode(base64Url.normalize(keyId));
+    final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
+    var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes);
+
+    final function = InvokeContractHostFunction(contractId, 'remove_signer',
+        arguments: [signer.toXdrSCVal()]);
+
+    return await _txForHostFunction(txSourceAccountId, function);
+  }
+
   Future<Transaction> addEd25519(
     String txSourceAccountId,
     String newSignerAccountId, {
@@ -313,6 +329,21 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
+  Future<Transaction> removeEd25519(
+      String txSourceAccountId, String signerAccountId) async {
+    if (keyId == null) {
+      throw Exception("wallet must be connected. Call connectWallet first");
+    }
+    final contractId = _deriveContractId(credentialsId: keyId!);
+    final publicKeyBytes = StrKey.decodeStellarAccountId(signerAccountId);
+    var signer = Ed25519PasskeySigner(publicKeyBytes);
+
+    final function = InvokeContractHostFunction(contractId, 'remove_signer',
+        arguments: [signer.toXdrSCVal()]);
+
+    return await _txForHostFunction(txSourceAccountId, function);
+  }
+
   Future<Transaction> addPolicy(String txSourceAccountId, Address policy,
       {Map<Address, List<PasskeySignerKey>?>? limits,
       PasskeySignerStorage? storage,
@@ -344,6 +375,19 @@ class PasskeyKit {
         storage: storage ?? PasskeySignerStorage.persistent);
 
     final function = InvokeContractHostFunction(contractId, 'update_signer',
+        arguments: [signer.toXdrSCVal()]);
+
+    return await _txForHostFunction(txSourceAccountId, function);
+  }
+
+  Future<Transaction> removePolicy(String txSourceAccountId, Address policy) async {
+    if (keyId == null) {
+      throw Exception("wallet must be connected. call connectWallet first");
+    }
+    final contractId = _deriveContractId(credentialsId: keyId!);
+    var signer = PolicyPasskeySigner(policy);
+
+    final function = InvokeContractHostFunction(contractId, 'remove_signer',
         arguments: [signer.toXdrSCVal()]);
 
     return await _txForHostFunction(txSourceAccountId, function);
