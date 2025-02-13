@@ -35,6 +35,10 @@ class EnvService {
     return getValue('ed25519Signer_secret');
   }
 
+  static String getSamplePolicyCId() {
+    return getValue('sample_policy_cid');
+  }
+
   static String getSubmitterSecret() {
     final value = dotenv.env['submitter_secret'];
     if (value == null) {

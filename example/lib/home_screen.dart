@@ -31,6 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
   double? balance;
   bool isLoadingBalance = false;
   bool isAddingEd25519Signer = false;
+  bool isAddingPolicySigner = false;
   bool isAddingSecp256r1Signer = false;
   bool isEd25519Transferring = false;
   String? keyName;
@@ -90,6 +91,8 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(height: 5),
               _ed25519TransferRow(),
               const Divider(),
+              _policyAddRow(),
+              const Divider(),
               _secp256r1AddRow(),
             ],
           ),
@@ -147,11 +150,11 @@ class _HomeScreenState extends State<HomeScreen> {
       isAddingEd25519Signer = true;
     });
     try {
-      final signerPublicKey =
+      final signerAccountId =
           KeyPair.fromSecretSeed(EnvService.getEd25519SignerSecret()).accountId;
 
       var transaction = await widget.kit.addEd25519(
-          StellarService.submitterKeyPair.accountId, signerPublicKey,
+          StellarService.submitterKeyPair.accountId, signerAccountId,
           storage: PasskeySignerStorage.temporary);
 
       final signaturesExpirationLedger =
@@ -185,6 +188,60 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  void _addPolicySigner() async {
+    setState(() {
+      isAddingPolicySigner = true;
+    });
+    try {
+
+      final signerAccountKp =
+          KeyPair.fromSecretSeed(EnvService.getEd25519SignerSecret());
+
+
+      Map<Address, List<PasskeySignerKey>?> limits = {
+        Address.forAccountId(signerAccountKp.accountId)
+            :
+        [Ed25519PasskeySignerKey(signerAccountKp.publicKey)]
+      };
+
+
+      var transaction = await widget.kit.addPolicy(
+          StellarService.submitterKeyPair.accountId,
+          Address.forContractId(EnvService.getSamplePolicyCId()),
+          limits: limits,
+          storage: PasskeySignerStorage.temporary);
+
+      final signaturesExpirationLedger =
+          await StellarService.getLatestLedgerSequence() + 60;
+      await widget.kit.signTxAuthEntriesWithPasskey(transaction,
+          getPasskeyCredentials: AuthService.getPasskeyCredentials,
+          signaturesExpirationLedger: signaturesExpirationLedger);
+
+      final simulateResponse =
+      await StellarService.simulateSorobanTx(transaction);
+      if (simulateResponse.resultError != null) {
+        throw Exception(
+            "could not simulate signed transaction: ${simulateResponse.resultError!}");
+      }
+
+      transaction.sorobanTransactionData = simulateResponse.transactionData;
+      transaction.addResourceFee(simulateResponse.minResourceFee!);
+      transaction.setSorobanAuth(simulateResponse.sorobanAuth);
+      transaction.sign(StellarService.submitterKeyPair, StellarService.network);
+
+      await StellarService.sendAndCheckSorobanTx(transaction);
+
+      _showMsg("Signer added!");
+    } catch (e) {
+      _showErrMsg('Error: $e');
+      log('Error: $e');
+    } finally {
+      setState(() {
+        isAddingPolicySigner = false;
+      });
+    }
+  }
+
   void _addSecp256r1Signer() async {
     if (keyName == null) {
       _showErrMsg('Please enter a name for the signer');
@@ -195,7 +252,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     try {
       final createKeyResponse = await widget.kit.createKey(
-          'FK-Example', keyName!, AuthService.createPasskeyCredentials);
+          EnvService.getAppName(), keyName!, AuthService.createPasskeyCredentials);
 
       final sequence = await StellarService.getLatestLedgerSequence();
 
@@ -312,6 +369,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Row _policyAddRow() {
+    return Row(
+      children: [
+        _rowLabel("Add Policy Signer"),
+        IconButton(
+          icon: isAddingPolicySigner
+              ? _loadingIndicator()
+              : const Icon(
+            Icons.add,
+            size: 20,
+          ),
+          onPressed: () => isAddingPolicySigner ? null : _addPolicySigner(),
+        ),
+      ],
+    );
+  }
+
   Row _secp256r1AddRow() {
     return Row(
       children: [
@@ -358,7 +432,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-  
+
   Widget _loadingIndicator() {
     return const SizedBox(
       width: 24,
