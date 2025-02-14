@@ -36,6 +36,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool isAddingSecp256r1Signer = false;
   bool isEd25519Transferring = false;
   bool isPolicyTransferring = false;
+  bool isMultisigTransferring = false;
+
   String? keyName;
 
   @override
@@ -98,6 +100,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Divider(),
                 _policyAddRow(),
                 _policyTransferRow(),
+                const Divider(),
+                _multisigTransferRow(),
                 const Divider(),
                 _secp256r1AddRow(),
                 _secp256r1AddLabelRow(),
@@ -322,6 +326,58 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+
+  void _multisigTransfer() async {
+    setState(() {
+      isMultisigTransferring = true;
+    });
+    try {
+      final transaction =
+      await StellarService.buildTransferTx(widget.user.contractId, lumens: 1);
+
+      final signerKeypair =
+      KeyPair.fromSecretSeed(EnvService.getEd25519SignerSecret());
+
+      final signaturesExpirationLedger =
+          await StellarService.getLatestLedgerSequence() + 60;
+
+      await widget.kit.signTxAuthEntriesWithPolicy(transaction,
+          policyContractId: EnvService.getSamplePolicyCId(),
+          signaturesExpirationLedger: signaturesExpirationLedger);
+
+      await widget.kit.signTxAuthEntriesWithKeyPair(transaction,
+          signerKeypair: signerKeypair);
+
+      await widget.kit.signTxAuthEntriesWithPasskey(transaction,
+          getPasskeyCredentials: AuthService.getPasskeyCredentials,
+          signaturesExpirationLedger: signaturesExpirationLedger);
+
+      final simulateResponse =
+      await StellarService.simulateSorobanTx(transaction);
+      if (simulateResponse.resultError != null) {
+        throw Exception(
+            "could not simulate signed transaction: ${simulateResponse.resultError!}");
+      }
+
+      transaction.sorobanTransactionData = simulateResponse.transactionData;
+      transaction.addResourceFee(simulateResponse.minResourceFee!);
+      transaction.setSorobanAuth(simulateResponse.sorobanAuth);
+      transaction.sign(StellarService.submitterKeyPair, StellarService.network);
+
+      await StellarService.sendAndCheckSorobanTx(transaction);
+
+      _showMsg("Transfer success!");
+      _refreshBalance();
+    } catch (e) {
+      _showErrMsg('Error: $e');
+      log('Error: $e');
+    } finally {
+      setState(() {
+        isMultisigTransferring = false;
+      });
+    }
+  }
+
   void _addSecp256r1Signer() async {
     if (keyName == null) {
       _showErrMsg('Please enter a name for the signer');
@@ -498,6 +554,23 @@ class _HomeScreenState extends State<HomeScreen> {
                   size: 20,
                 ),
           onPressed: () => isPolicyTransferring ? null : _policyTransfer(),
+        ),
+      ],
+    );
+  }
+
+  Row _multisigTransferRow() {
+    return Row(
+      children: [
+        _rowLabel("Multisig Transfer"),
+        IconButton(
+          icon: isMultisigTransferring
+              ? _loadingIndicator()
+              : const Icon(
+            Icons.arrow_forward,
+            size: 20,
+          ),
+          onPressed: () => isMultisigTransferring ? null : _multisigTransfer(),
         ),
       ],
     );
