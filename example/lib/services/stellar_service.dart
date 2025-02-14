@@ -108,10 +108,10 @@ class StellarService {
     return transactionResponse!;
   }
 
-  static Future<Transaction> buildTransferTx(String contractId) async {
+  static Future<Transaction> buildTransferTx(String contractId, {int lumens = 1}) async {
     final from = Address.forContractId(contractId).toXdrSCVal();
     final to = Address.forAccountId(submitterKeyPair.accountId).toXdrSCVal();
-    final amount = XdrSCVal.forI128Parts(0, 1 * 10000000); // 1 XLM
+    final amount = XdrSCVal.forI128Parts(0, lumens * 10000000); // 1 XLM
     final function = InvokeContractHostFunction(nativeSacCId, "transfer",
         arguments: [from, to, amount]);
     final sourceAccountId = submitterKeyPair.accountId;

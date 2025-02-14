@@ -35,10 +35,6 @@ class EnvService {
     return getValue('ed25519Signer_secret');
   }
 
-  static String getEd25519PolicySignerSecret() {
-    return getValue('ed25519PolicySigner_secret');
-  }
-
   static String getSamplePolicyCId() {
     return getValue('sample_policy_cid');
   }

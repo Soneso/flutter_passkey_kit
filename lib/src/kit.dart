@@ -250,8 +250,8 @@ class PasskeyKit {
           List<XdrSCMapEntry>.empty(growable: true);
       var currentMap =
           entry.credentials.addressCredentials!.signature.vec!.firstOrNull;
-      if (currentMap is List<XdrSCMapEntry>) {
-        newEntries.addAll(currentMap as List<XdrSCMapEntry>);
+      if (currentMap != null && currentMap.map != null) {
+        newEntries.addAll(currentMap.map!);
       }
       newEntries.add(signature);
       //Order the map by key
@@ -340,6 +340,7 @@ class PasskeyKit {
     final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
     var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes,
         expiration: expiration,
+        limits: limits,
         storage: storage ?? PasskeySignerStorage.persistent);
 
     final function = InvokeContractHostFunction(contractId, 'add_signer',
@@ -361,6 +362,7 @@ class PasskeyKit {
     final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
     var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes,
         expiration: expiration,
+        limits: limits,
         storage: storage ?? PasskeySignerStorage.persistent);
 
     final function = InvokeContractHostFunction(contractId, 'update_signer',
@@ -399,6 +401,7 @@ class PasskeyKit {
     final publicKeyBytes = StrKey.decodeStellarAccountId(newSignerAccountId);
     var signer = Ed25519PasskeySigner(publicKeyBytes,
         expiration: expiration,
+        limits: limits,
         storage: storage ?? PasskeySignerStorage.persistent);
 
     final function = InvokeContractHostFunction(contractId, 'add_signer',
@@ -419,6 +422,7 @@ class PasskeyKit {
     final publicKeyBytes = StrKey.decodeStellarAccountId(signerAccountId);
     var signer = Ed25519PasskeySigner(publicKeyBytes,
         expiration: expiration,
+        limits: limits,
         storage: storage ?? PasskeySignerStorage.persistent);
 
     final function = InvokeContractHostFunction(contractId, 'update_signer',
@@ -452,6 +456,7 @@ class PasskeyKit {
     final contractId = _deriveContractId(credentialsId: keyId!);
     var signer = PolicyPasskeySigner(policy,
         expiration: expiration,
+        limits: limits,
         storage: storage ?? PasskeySignerStorage.persistent);
 
     final function = InvokeContractHostFunction(contractId, 'add_signer',
@@ -470,6 +475,7 @@ class PasskeyKit {
     final contractId = _deriveContractId(credentialsId: keyId!);
     var signer = PolicyPasskeySigner(policy,
         expiration: expiration,
+        limits: limits,
         storage: storage ?? PasskeySignerStorage.persistent);
 
     final function = InvokeContractHostFunction(contractId, 'update_signer',
@@ -930,7 +936,7 @@ class PolicySignature {
 
   XdrSCVal toXdrSCVal() {
     return XdrSCVal.forVec(
-        [XdrSCVal.forSymbol("Policy"), XdrSCVal.forVoid()]);
+        [XdrSCVal.forSymbol("Policy")]);
   }
 }
 
