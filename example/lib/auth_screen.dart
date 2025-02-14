@@ -164,9 +164,6 @@ class _AuthScreenState extends State<AuthScreen> {
       }
       log("Wallet created: ${user.contractId}");
 
-      await StellarService.fundWallet(user.contractId);
-      log("Wallet funded: ${user.contractId}");
-
       Navigator.of(NavigationService.navigatorKey.currentContext!).pushReplacement(
         MaterialPageRoute(
           builder: (context) => WalletCreatedScreen(

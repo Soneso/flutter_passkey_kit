@@ -29,6 +29,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   double? balance;
+  bool isFundingWallet = false;
   bool isLoadingBalance = false;
   bool isAddingEd25519Signer = false;
   bool isAddingPolicySigner = false;
@@ -67,38 +68,61 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
         backgroundColor: Colors.deepPurple,
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: <Widget>[
-              const Text(
-                'You are connected to your wallet!',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.deepPurple,
+      body: SingleChildScrollView(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  'You are connected to your wallet!',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.deepPurple,
+                  ),
                 ),
-              ),
-              const Divider(),
-              const SizedBox(height: 25),
-              _contractIdRow(),
-              const SizedBox(height: 5),
-              _balanceRow(),
-              const Divider(),
-              _ed25519AddRow(),
-              const SizedBox(height: 5),
-              _ed25519TransferRow(),
-              const Divider(),
-              _policyAddRow(),
-              const Divider(),
-              _secp256r1AddRow(),
-            ],
+                const Divider(),
+                const SizedBox(height: 25),
+                _contractIdRow(),
+                const SizedBox(height: 5),
+                _balanceRow(),
+                const Divider(),
+                _fundWalletRow(),
+                const Divider(),
+                _ed25519AddRow(),
+                const SizedBox(height: 5),
+                _ed25519TransferRow(),
+                const Divider(),
+                _policyAddRow(),
+                const Divider(),
+                _secp256r1AddRow(),
+                _secp256r1AddLabelRow(),
+                const Divider(),
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+
+  void _fundWallet() async {
+    setState(() {
+      isFundingWallet= true;
+    });
+    try {
+      await StellarService.fundWallet(widget.user.contractId);
+      _refreshBalance();
+    } catch (e) {
+      _showErrMsg('Error: $e');
+      log('Error: $e');
+    } finally {
+      setState(() {
+        isFundingWallet = false;
+      });
+    }
   }
 
   void _ed25519Transfer() async {
@@ -335,6 +359,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Row _fundWalletRow() {
+    return Row(
+      children: [
+        _rowLabel("Fund wallet (testnet only)"),
+        IconButton(
+          icon: isFundingWallet
+              ? _loadingIndicator()
+              : const Icon(
+            Icons.add,
+            size: 20,
+          ),
+          onPressed: () => isFundingWallet ? null : _fundWallet(),
+        ),
+      ],
+    );
+  }
+
   Row _ed25519AddRow() {
     return Row(
       children: [
@@ -386,6 +427,24 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Row _secp256r1AddLabelRow() {
+    return Row(
+      children: [
+        _rowLabel("Add Secp256r1 Signer"),
+        IconButton(
+          icon: isAddingSecp256r1Signer
+              ? _loadingIndicator()
+              : const Icon(
+            Icons.add,
+            size: 20,
+          ),
+          onPressed: () =>
+          isAddingSecp256r1Signer ? null : _addSecp256r1Signer(),
+        ),
+      ],
+    );
+  }
+
   Row _secp256r1AddRow() {
     return Row(
       children: [
@@ -398,22 +457,11 @@ class _HomeScreenState extends State<HomeScreen> {
               });
             },
             decoration: const InputDecoration(
-              hintText: 'Add Secp256r1 Signer',
+              hintText: 'New Secp256r1 Signer name',
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.person, color: Colors.deepPurple),
             ),
           ),
-        ),
-
-        IconButton(
-          icon: isAddingSecp256r1Signer
-              ? _loadingIndicator()
-              : const Icon(
-                  Icons.add,
-                  size: 20,
-                ),
-          onPressed: () =>
-              isAddingSecp256r1Signer ? null : _addSecp256r1Signer(),
         ),
       ],
     );
