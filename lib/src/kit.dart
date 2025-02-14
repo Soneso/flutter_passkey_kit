@@ -166,12 +166,12 @@ class PasskeyKit {
     }
     final keyId = passkeyCredentials.id!;
 
-    final sigRawBase64 = passkeyCredentials.response?.signature;
-    if (sigRawBase64 == null) {
+    final passkeySigRawBase64 = passkeyCredentials.response?.signature;
+    if (passkeySigRawBase64 == null) {
       throw ArgumentError("Signature not found in credentials result");
     }
-    final signatureRaw = base64Url.decode(base64Url.normalize(sigRawBase64));
-    final signature = _compactSignature(signatureRaw);
+    final passkeySignatureRaw = base64Url.decode(base64Url.normalize(passkeySigRawBase64));
+    final passkeySignature = _compactSignature(passkeySignatureRaw);
 
     final authenticatorDataB64 = passkeyCredentials.response?.authenticatorData;
     if (authenticatorDataB64 == null) {
@@ -190,7 +190,7 @@ class PasskeyKit {
     final scKey =
         Secp256r1PasskeySignerKey(base64Url.decode(base64Url.normalize(keyId)));
     final scVal =
-        Secp256r1Signature(authenticatorData, clientDataJson, signature);
+        Secp256r1Signature(authenticatorData, clientDataJson, passkeySignature);
     final scEntry = XdrSCMapEntry(scKey.toXdrSCVal(), scVal.toXdrSCVal());
 
     _addSignatureToEntry(entry, scEntry);
@@ -208,13 +208,27 @@ class PasskeyKit {
     }
     final payload = _getAuthPayload(entry);
 
-    final signature = signerKeyPair.sign(payload);
+    final payloadSignature = signerKeyPair.sign(payload);
 
     final scKey = Ed25519PasskeySignerKey(signerKeyPair.publicKey);
-    final scVal = Ed25519Signature(signature);
-    final scEntry = XdrSCMapEntry(scKey.toXdrSCVal(), scVal.toXdrSCVal());
+    final scVal = Ed25519Signature(payloadSignature);
+    final signature = XdrSCMapEntry(scKey.toXdrSCVal(), scVal.toXdrSCVal());
 
-    _addSignatureToEntry(entry, scEntry);
+    _addSignatureToEntry(entry, signature);
+
+    return entry;
+  }
+
+  /// Signs a SorobanAuthorizationEntry with the [policyContractId] as a policy signer. Make sure that the
+  /// [entry] has addressCredentials with the expiration ledger sequence correctly set.
+  Future<SorobanAuthorizationEntry> signAuthEntryWithPolicy(
+      SorobanAuthorizationEntry entry, String policyContractId) async {
+
+    final scKey = PolicyPasskeySignerKey(Address.forContractId(policyContractId));
+    final scVal = PolicySignature();
+    final signature = XdrSCMapEntry(scKey.toXdrSCVal(), scVal.toXdrSCVal());
+
+    _addSignatureToEntry(entry, signature);
 
     return entry;
   }
@@ -251,7 +265,7 @@ class PasskeyKit {
   }
 
   /// Signs all SorobanAuthorization entries of the [transaction] with passkey credentials. Make sure that all
-  /// entries ave addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
+  /// entries have addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
   /// to be set before signing. Provide [getPasskeyCredentials] so that the user can be asked for their credentials.
   Future<void> signTxAuthEntriesWithPasskey(Transaction transaction,
       {required Future<PublicKeyCredential> Function(
@@ -273,7 +287,7 @@ class PasskeyKit {
   }
 
   /// Signs all SorobanAuthorization entries of the [transaction] with the given [signerKeypair] as as an ed25519 signer. Make sure that all
-  /// entries ave addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
+  /// entries have addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
   /// to be set before signing. Provide [signerKeypair] including the private key for signing.
   Future<void> signTxAuthEntriesWithKeyPair(Transaction transaction,
       {required KeyPair signerKeypair, int? signaturesExpirationLedger}) async {
@@ -286,6 +300,25 @@ class PasskeyKit {
                 .signatureExpirationLedger = signaturesExpirationLedger;
           }
           await signAuthEntryWithKeyPair(authEntry, signerKeypair);
+        }
+      }
+    }
+  }
+
+  /// Signs all SorobanAuthorization entries of the [transaction] with the given [policyContractId] as as a policy signer. Make sure that all
+  /// entries have addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
+  /// to be set before signing.
+  Future<void> signTxAuthEntriesWithPolicy(Transaction transaction,
+      {required String policyContractId, int? signaturesExpirationLedger}) async {
+    for (Operation op in transaction.operations) {
+      if (op is InvokeHostFunctionOperation) {
+        for (SorobanAuthorizationEntry authEntry in op.auth) {
+          if (signaturesExpirationLedger != null &&
+              authEntry.credentials.addressCredentials != null) {
+            authEntry.credentials.addressCredentials!
+                .signatureExpirationLedger = signaturesExpirationLedger;
+          }
+          await signAuthEntryWithPolicy(authEntry, policyContractId);
         }
       }
     }
@@ -825,13 +858,13 @@ abstract class PasskeySignerKey {
 }
 
 class PolicyPasskeySignerKey extends PasskeySignerKey {
-  Address address;
-  PolicyPasskeySignerKey(this.address) : super(PasskeySignerType.policy);
+  Address policyAddress;
+  PolicyPasskeySignerKey(this.policyAddress) : super(PasskeySignerType.policy);
 
   @override
   XdrSCVal toXdrSCVal() {
     return XdrSCVal.forVec(
-        [XdrSCVal.forSymbol(type.value), address.toXdrSCVal()]);
+        [XdrSCVal.forSymbol(type.value), policyAddress.toXdrSCVal()]);
   }
 }
 
@@ -888,6 +921,16 @@ class Ed25519Signature {
   XdrSCVal toXdrSCVal() {
     return XdrSCVal.forVec(
         [XdrSCVal.forSymbol("Ed25519"), XdrSCVal.forBytes(signature)]);
+  }
+}
+
+class PolicySignature {
+
+  PolicySignature();
+
+  XdrSCVal toXdrSCVal() {
+    return XdrSCVal.forVec(
+        [XdrSCVal.forSymbol("Policy"), XdrSCVal.forVoid()]);
   }
 }
 

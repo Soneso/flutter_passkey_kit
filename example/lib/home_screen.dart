@@ -35,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool isAddingPolicySigner = false;
   bool isAddingSecp256r1Signer = false;
   bool isEd25519Transferring = false;
+  bool isPolicyTransferring = false;
   String? keyName;
 
   @override
@@ -96,6 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 _ed25519TransferRow(),
                 const Divider(),
                 _policyAddRow(),
+                _policyTransferRow(),
                 const Divider(),
                 _secp256r1AddRow(),
                 _secp256r1AddLabelRow(),
@@ -131,7 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     try {
       final transaction =
-          await StellarService.buildEd25519TransferTx(widget.user.contractId);
+          await StellarService.buildTransferTx(widget.user.contractId);
 
       final signerKeypair =
           KeyPair.fromSecretSeed(EnvService.getEd25519SignerSecret());
@@ -217,21 +219,21 @@ class _HomeScreenState extends State<HomeScreen> {
       isAddingPolicySigner = true;
     });
     try {
+      _showMsg("Adding policy first.");
+      await _addPolicy();
+      _showMsg("Policy added");
 
-      final signerAccountKp =
-          KeyPair.fromSecretSeed(EnvService.getEd25519SignerSecret());
-
+      final signerAccountId =
+          KeyPair.fromSecretSeed(EnvService.getEd25519PolicySignerSecret()).accountId;
 
       Map<Address, List<PasskeySignerKey>?> limits = {
-        Address.forAccountId(signerAccountKp.accountId)
+        Address.forContractId(EnvService.getNativeSacCId())
             :
-        [Ed25519PasskeySignerKey(signerAccountKp.publicKey)]
+        [PolicyPasskeySignerKey(Address.forContractId(EnvService.getSamplePolicyCId()))]
       };
 
-
-      var transaction = await widget.kit.addPolicy(
-          StellarService.submitterKeyPair.accountId,
-          Address.forContractId(EnvService.getSamplePolicyCId()),
+      var transaction = await widget.kit.addEd25519(
+          StellarService.submitterKeyPair.accountId, signerAccountId,
           limits: limits,
           storage: PasskeySignerStorage.temporary);
 
@@ -255,13 +257,98 @@ class _HomeScreenState extends State<HomeScreen> {
 
       await StellarService.sendAndCheckSorobanTx(transaction);
 
-      _showMsg("Signer added!");
+      _showMsg("Policy Signer added.");
+
     } catch (e) {
       _showErrMsg('Error: $e');
       log('Error: $e');
     } finally {
       setState(() {
         isAddingPolicySigner = false;
+      });
+    }
+  }
+
+  Future<void> _addPolicy() async {
+    final signerAccountKp =
+    KeyPair.fromSecretSeed(EnvService.getEd25519PolicySignerSecret());
+
+
+    Map<Address, List<PasskeySignerKey>?> limits = {
+      Address.forContractId(EnvService.getSamplePolicyCId())
+          :
+      [Ed25519PasskeySignerKey(signerAccountKp.publicKey)]
+    };
+
+    var transaction = await widget.kit.addPolicy(
+        StellarService.submitterKeyPair.accountId,
+        Address.forContractId(EnvService.getSamplePolicyCId()),
+        limits: limits,
+        storage: PasskeySignerStorage.temporary);
+
+    final signaturesExpirationLedger =
+        await StellarService.getLatestLedgerSequence() + 60;
+    await widget.kit.signTxAuthEntriesWithPasskey(transaction,
+        getPasskeyCredentials: AuthService.getPasskeyCredentials,
+        signaturesExpirationLedger: signaturesExpirationLedger);
+
+    final simulateResponse =
+    await StellarService.simulateSorobanTx(transaction);
+    if (simulateResponse.resultError != null) {
+      throw Exception(
+          "could not simulate signed transaction: ${simulateResponse.resultError!}");
+    }
+
+    transaction.sorobanTransactionData = simulateResponse.transactionData;
+    transaction.addResourceFee(simulateResponse.minResourceFee!);
+    transaction.setSorobanAuth(simulateResponse.sorobanAuth);
+    transaction.sign(StellarService.submitterKeyPair, StellarService.network);
+
+    await StellarService.sendAndCheckSorobanTx(transaction);
+  }
+
+  void _policyTransfer() async {
+    setState(() {
+      isPolicyTransferring = true;
+    });
+    try {
+      final transaction =
+      await StellarService.buildTransferTx(widget.user.contractId);
+
+      final signerKeypair =
+      KeyPair.fromSecretSeed(EnvService.getEd25519PolicySignerSecret());
+
+      final signaturesExpirationLedger =
+          await StellarService.getLatestLedgerSequence() + 60;
+
+      await widget.kit.signTxAuthEntriesWithKeyPair(transaction,
+          signerKeypair: signerKeypair,
+          signaturesExpirationLedger: signaturesExpirationLedger);
+
+      await widget.kit.signTxAuthEntriesWithPolicy(transaction, policyContractId: EnvService.getSamplePolicyCId());
+
+      final simulateResponse =
+      await StellarService.simulateSorobanTx(transaction);
+      if (simulateResponse.resultError != null) {
+        throw Exception(
+            "could not simulate signed transaction: ${simulateResponse.resultError!}");
+      }
+
+      transaction.sorobanTransactionData = simulateResponse.transactionData;
+      transaction.addResourceFee(simulateResponse.minResourceFee!);
+      transaction.setSorobanAuth(simulateResponse.sorobanAuth);
+      transaction.sign(StellarService.submitterKeyPair, StellarService.network);
+
+      await StellarService.sendAndCheckSorobanTx(transaction);
+
+      _showMsg("Transfer success!");
+      _refreshBalance();
+    } catch (e) {
+      _showErrMsg('Error: $e');
+      log('Error: $e');
+    } finally {
+      setState(() {
+        isPolicyTransferring = false;
       });
     }
   }
@@ -362,7 +449,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Row _fundWalletRow() {
     return Row(
       children: [
-        _rowLabel("Fund wallet (testnet only)"),
+        _rowLabel("Add Funds (testnet only)"),
         IconButton(
           icon: isFundingWallet
               ? _loadingIndicator()
@@ -426,6 +513,24 @@ class _HomeScreenState extends State<HomeScreen> {
       ],
     );
   }
+
+  Row _policyTransferRow() {
+    return Row(
+      children: [
+        _rowLabel("Policy Transfer"),
+        IconButton(
+          icon: isPolicyTransferring
+              ? _loadingIndicator()
+              : const Icon(
+            Icons.arrow_forward,
+            size: 20,
+          ),
+          onPressed: () => isPolicyTransferring ? null : _policyTransfer(),
+        ),
+      ],
+    );
+  }
+
 
   Row _secp256r1AddLabelRow() {
     return Row(
