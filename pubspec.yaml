@@ -1,7 +1,7 @@
 name: flutter_passkey_kit
-description: "A new Flutter package project."
+description: "Flutter Passkey Kit for Soroban Smart Wallets"
 version: 0.0.1
-homepage:
+repository: https://github.com/Soneso/flutter_passkey_kit
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

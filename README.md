@@ -13,29 +13,23 @@ The official Stellar developer docs regarding smart wallets can be found [here](
 
 This Flutter Passkey Kit is inspired by the [TypeScript PasskeyKit](https://github.com/kalepail/passkey-kit) provided by kalepail.
 
-## Example app
+## Demo app
 
-You can find an example app using this library in the `/example` folder.
+You can find a demo app using this library in the `/example` folder. 
 
-To use the example app, you must first build the smart wallet contract from the `/contracts` folder of the passkey kit project:
+Probably the best way to familiarize yourself with the functionality of the passkey kit is to use the demo app by cloning this repo.
 
-```shell
-cd contracts
-make build
-```
+The docs of the demo app can be found [here](https://github.com/Soneso/flutter_passkey_kit/blob/main/example/README.md)
 
-Next, install the contract using the stellar-cli. E.g.:
+## Functionality
 
-```shell
-cd out
-stellar contract install --source-account alice --wasm smart_wallet.optimized.wasm --rpc-url https://soroban-testnet.stellar.org --network-passphrase 'Test SDF Network ; September 2015'
-```
+- create wallet
+- connect wallet
+- create keyIds and public keys for new secp256r1 signers
+- add/update/remove secp256r1 and ed25519 signers
+- add/update/remove policies
+- sign auth entries with secp256r1, ed25519 and policy signers
 
-You will obtain the `wasm_hash` of the installed contract that will look similar to this:
+## Installation
 
-```shell
-6e7d01475c89eee531a91ec0f8f5348beda9d9e232a4d383da02fc9afc3c221b
-```
-
-Go back to the `/example` folder and update the `.env` file by filling the value of `wallet_wasm_hash` with the obtained `wasm_hash`.
-Also update the other values of `.env`.
+- add `flutter_passkey_kit: ^0.0.1`  to your package's pubspec.yaml
