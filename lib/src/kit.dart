@@ -17,6 +17,10 @@ class PasskeyKit {
   static const String _challengeStr = "stellaristhebetterblockchain";
   static final Codec<String, String> _stringToBase64Url = utf8.fuse(base64Url);
 
+  /// Constructor. [rpId] is the domain where your DAL file is deployed.
+  /// [rpcUrl] is the url to the soroban rpc server to be used for requests.
+  /// [walletWasmHash] is the hash of your installed smart wallet contract.
+  /// Please also provide the Stellar [network] to be used.
   PasskeyKit(this.rpId, this.rpcUrl, this.walletWasmHash, this.network) {
     walletKeyPair = KeyPair.fromSecretSeedList(
         Util.hash(Uint8List.fromList(network.networkPassphrase.codeUnits)));
@@ -24,32 +28,52 @@ class PasskeyKit {
     server.enableLogging = true;
   }
 
+  /// Returns a [CreateWalletResponse] containing the data needed to create a new wallet for the given [appName] and [userName].
+  /// This includes the transaction to be submitted by you to the stellar network, so that the wallet is created.
+  /// When calling this function you must provide a [createPasskeyCredentials] function that requests the creation and returns the
+  /// users passkey credentials. An example can be found in the example folder of this library.
+  /// If you provide the [sourceAccountId] for the transaction, than you will need to sign it
+  /// with the corresponding keypair. In this case you can send it directly to your soroban rpc server after signing it.
+  /// Otherwise this function will use it's own source account and you will receive an already signed transaction that you
+  /// can send to Stellar via a fee bump transaction or to launchtube (https://github.com/stellar/launchtube).
   Future<CreateWalletResponse> createWallet(
       String appName,
       String userName,
       Future<PublicKeyCredential> Function(
               {required CredentialCreationOptions options})
-          createPasskeyCredentials) async {
+          createPasskeyCredentials,
+      {String? sourceAccountId}) async {
     final createKeyResponse =
         await createKey(appName, userName, createPasskeyCredentials);
 
-    var signedTx = await _createAndSignDeployTx(
-        credentialsId: createKeyResponse.keyId,
-        publicKey: base64Url.decode(base64Url.normalize(createKeyResponse.publicKey)));
+    var transaction = await _createAndSignDeployTx(
+        keyId: createKeyResponse.keyId,
+        publicKey:
+            base64Url.decode(base64Url.normalize(createKeyResponse.publicKey)),
+        sourceAccountId: sourceAccountId);
 
-    final contractId =
-        _deriveContractId(credentialsId: createKeyResponse.keyId);
+    final contractId = _deriveContractId(keyId: createKeyResponse.keyId);
 
-    return CreateWalletResponse(createKeyResponse.keyId, contractId, signedTx);
+    return CreateWalletResponse(
+        createKeyResponse.keyId, contractId, transaction);
   }
 
+  /// This function connects your passkey kit instance to the users wallet if it exists.
+  /// If you provide the [keyId] of the user, then this function will only check if the wallet exists
+  /// and connect it. If you provide no [keyId] you must provide the [getPasskeyCredentials] function that requests and returns the
+  /// users passkey login credentials.
   Future<ConnectWalletResponse> connectWallet(
+      {String? keyId,
       Future<PublicKeyCredential> Function(
-              {required CredentialLoginOptions options})
-          getPasskeyCredentials,
-      {String? keyId}) async {
+              {required CredentialLoginOptions options})?
+          getPasskeyCredentials}) async {
     String? username;
 
+    if (keyId == null && getPasskeyCredentials == null) {
+      throw Exception("KeyId or getPasskeyCredentials must be provided");
+    }
+
+    // if no keyId is provided, we must get the users credentials to obtain the id.
     if (keyId == null) {
       var options = CredentialLoginOptions(
         challenge: _stringToBase64Url.encode(_challengeStr),
@@ -57,7 +81,7 @@ class PasskeyKit {
         userVerification: "discouraged",
       );
 
-      var credentials = await getPasskeyCredentials(options: options);
+      var credentials = await getPasskeyCredentials!(options: options);
       if (credentials.id == null) {
         throw Exception('Invalid passkey login credentials: id is null');
       }
@@ -71,7 +95,7 @@ class PasskeyKit {
 
     // sign in cannot retrieve a public-key so we can only derive the
     // contract address
-    final contractId = _deriveContractId(credentialsId: keyId!);
+    final contractId = _deriveContractId(keyId: keyId!);
 
     final cData = await server.getContractData(
         contractId,
@@ -82,11 +106,16 @@ class PasskeyKit {
       throw Exception("contract not found: $contractId");
     }
 
+    // connect this instance to the user
     this.keyId = keyId;
 
     return ConnectWalletResponse(keyId, contractId, username: username);
   }
 
+  /// This function creates a new key, that can be used as a Secp256r1 signer for your wallet.
+  /// Provide the [appName] and the [userName] to create the new key for. You must also provide
+  /// a [createPasskeyCredentials] function, that requests the creation and returns the
+  /// users passkey credentials. An example can be found in the example folder of this library.
   Future<CreateKeyResponse> createKey(
       String appName,
       String userName,
@@ -127,7 +156,7 @@ class PasskeyKit {
       throw Exception("Created credentials have no id");
     }
 
-    final credentialsId = createdCredentials.id!;
+    final keyId = createdCredentials.id!;
 
     if (createdCredentials.response == null) {
       return throw Exception(
@@ -141,7 +170,7 @@ class PasskeyKit {
           "Could not extract public key from created credentials");
     }
 
-    return CreateKeyResponse(credentialsId, base64UrlEncode(publicKey.toList()));
+    return CreateKeyResponse(keyId, base64UrlEncode(publicKey.toList()));
   }
 
   /// Signs a SorobanAuthorizationEntry with passkey credentials. Make sure that the
@@ -170,7 +199,8 @@ class PasskeyKit {
     if (passkeySigRawBase64 == null) {
       throw ArgumentError("Signature not found in credentials result");
     }
-    final passkeySignatureRaw = base64Url.decode(base64Url.normalize(passkeySigRawBase64));
+    final passkeySignatureRaw =
+        base64Url.decode(base64Url.normalize(passkeySigRawBase64));
     final passkeySignature = _compactSignature(passkeySignatureRaw);
 
     final authenticatorDataB64 = passkeyCredentials.response?.authenticatorData;
@@ -223,8 +253,8 @@ class PasskeyKit {
   /// [entry] has addressCredentials with the expiration ledger sequence correctly set.
   Future<SorobanAuthorizationEntry> signAuthEntryWithPolicy(
       SorobanAuthorizationEntry entry, String policyContractId) async {
-
-    final scKey = PolicyPasskeySignerKey(Address.forContractId(policyContractId));
+    final scKey =
+        PolicyPasskeySignerKey(Address.forContractId(policyContractId));
     final scVal = PolicySignature();
     final signature = XdrSCMapEntry(scKey.toXdrSCVal(), scVal.toXdrSCVal());
 
@@ -309,7 +339,8 @@ class PasskeyKit {
   /// entries have addressCredentials with the expiration ledger sequence correctly set or provide a [signaturesExpirationLedger]
   /// to be set before signing.
   Future<void> signTxAuthEntriesWithPolicy(Transaction transaction,
-      {required String policyContractId, int? signaturesExpirationLedger}) async {
+      {required String policyContractId,
+      int? signaturesExpirationLedger}) async {
     for (Operation op in transaction.operations) {
       if (op is InvokeHostFunctionOperation) {
         for (SorobanAuthorizationEntry authEntry in op.auth) {
@@ -324,6 +355,12 @@ class PasskeyKit {
     }
   }
 
+  /// Creates a transaction that adds a new secp256r1 signer to the wallet,
+  /// identified by [keyId] and [publicKey] that can be obtained by calling [createKey].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
   Future<Transaction> addSecp256r1(
     String txSourceAccountId,
     String keyId,
@@ -335,7 +372,7 @@ class PasskeyKit {
     if (this.keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: this.keyId!);
+    final contractId = _deriveContractId(keyId: this.keyId!);
     var keyIdBytes = base64Url.decode(base64Url.normalize(keyId));
     final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
     var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes,
@@ -349,6 +386,12 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
+  /// Creates a transaction that updates the secp256r1 signer of the wallet,
+  /// identified by [keyId] and [publicKey].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
   Future<Transaction> updateSecp256r1(
       String txSourceAccountId, String keyId, String publicKey,
       {Map<Address, List<PasskeySignerKey>?>? limits,
@@ -357,7 +400,7 @@ class PasskeyKit {
     if (this.keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: this.keyId!);
+    final contractId = _deriveContractId(keyId: this.keyId!);
     var keyIdBytes = base64Url.decode(base64Url.normalize(keyId));
     final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
     var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes,
@@ -371,12 +414,18 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
+  /// Creates a transaction that removes the secp256r1 signer of the wallet,
+  /// identified by [keyId] and [publicKey].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
   Future<Transaction> removeSecp256r1(
       String txSourceAccountId, String keyId, String publicKey) async {
     if (this.keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: this.keyId!);
+    final contractId = _deriveContractId(keyId: this.keyId!);
     var keyIdBytes = base64Url.decode(base64Url.normalize(keyId));
     final publicKeyBytes = base64Url.decode(base64Url.normalize(publicKey));
     var signer = Secp256r1PasskeySigner(keyIdBytes, publicKeyBytes);
@@ -387,6 +436,12 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
+  /// Creates a transaction that adds a new ed25519 signer to the wallet,
+  /// identified by [newSignerAccountId].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
   Future<Transaction> addEd25519(
     String txSourceAccountId,
     String newSignerAccountId, {
@@ -397,7 +452,7 @@ class PasskeyKit {
     if (keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: keyId!);
+    final contractId = _deriveContractId(keyId: keyId!);
     final publicKeyBytes = StrKey.decodeStellarAccountId(newSignerAccountId);
     var signer = Ed25519PasskeySigner(publicKeyBytes,
         expiration: expiration,
@@ -410,6 +465,12 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
+  /// Creates a transaction that updates the ed25519 signer of the wallet,
+  /// identified by [signerAccountId].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
   Future<Transaction> updateEd25519(
       String txSourceAccountId, String signerAccountId,
       {Map<Address, List<PasskeySignerKey>?>? limits,
@@ -418,7 +479,7 @@ class PasskeyKit {
     if (keyId == null) {
       throw Exception("wallet must be connected. Call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: keyId!);
+    final contractId = _deriveContractId(keyId: keyId!);
     final publicKeyBytes = StrKey.decodeStellarAccountId(signerAccountId);
     var signer = Ed25519PasskeySigner(publicKeyBytes,
         expiration: expiration,
@@ -431,12 +492,18 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
+  /// Creates a transaction that removes the ed25519 signer of the wallet,
+  /// identified by [signerAccountId].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
   Future<Transaction> removeEd25519(
       String txSourceAccountId, String signerAccountId) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. Call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: keyId!);
+    final contractId = _deriveContractId(keyId: keyId!);
     final publicKeyBytes = StrKey.decodeStellarAccountId(signerAccountId);
     var signer = Ed25519PasskeySigner(publicKeyBytes);
 
@@ -446,15 +513,22 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> addPolicy(String txSourceAccountId, Address policy,
+  /// Creates a transaction that adds a policy the wallet,
+  /// identified by the [policyContractAddress].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
+  Future<Transaction> addPolicy(
+      String txSourceAccountId, Address policyContractAddress,
       {Map<Address, List<PasskeySignerKey>?>? limits,
       PasskeySignerStorage? storage,
       int? expiration}) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: keyId!);
-    var signer = PolicyPasskeySigner(policy,
+    final contractId = _deriveContractId(keyId: keyId!);
+    var signer = PolicyPasskeySigner(policyContractAddress,
         expiration: expiration,
         limits: limits,
         storage: storage ?? PasskeySignerStorage.persistent);
@@ -465,15 +539,22 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
-  Future<Transaction> updatePolicy(String txSourceAccountId, Address policy,
+  /// Creates a transaction that updates the policy of the wallet,
+  /// identified by the [policyContractAddress].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
+  Future<Transaction> updatePolicy(
+      String txSourceAccountId, Address policyContractAddress,
       {Map<Address, List<PasskeySignerKey>?>? limits,
       PasskeySignerStorage? storage,
       int? expiration}) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: keyId!);
-    var signer = PolicyPasskeySigner(policy,
+    final contractId = _deriveContractId(keyId: keyId!);
+    var signer = PolicyPasskeySigner(policyContractAddress,
         expiration: expiration,
         limits: limits,
         storage: storage ?? PasskeySignerStorage.persistent);
@@ -484,12 +565,18 @@ class PasskeyKit {
     return await _txForHostFunction(txSourceAccountId, function);
   }
 
+  /// Creates a transaction that removes the policy of the wallet,
+  /// identified by the [policyContractAddress].
+  /// Before calling this function, you must first connect your passkey kit instance
+  /// to the wallet by using the [connectWallet] function.
+  /// Returns a transaction, that can be sent by you to your soroban rpc server
+  /// after signing with the source account keypair.
   Future<Transaction> removePolicy(
       String txSourceAccountId, Address policy) async {
     if (keyId == null) {
       throw Exception("wallet must be connected. call connectWallet first");
     }
-    final contractId = _deriveContractId(credentialsId: keyId!);
+    final contractId = _deriveContractId(keyId: keyId!);
     var signer = PolicyPasskeySigner(policy);
 
     final function = InvokeContractHostFunction(contractId, 'remove_signer',
@@ -556,12 +643,14 @@ class PasskeyKit {
   }
 
   Future<Transaction> _createAndSignDeployTx(
-      {required String credentialsId, required Uint8List publicKey}) async {
+      {required String keyId,
+      required Uint8List publicKey,
+      String? sourceAccountId}) async {
     final server = SorobanServer(rpcUrl);
     server.enableLogging = true;
 
-    final sourceAccountId = walletKeyPair.accountId;
-    final sourceAccount = await server.getAccount(sourceAccountId);
+    final sourceAccId = sourceAccountId ?? walletKeyPair.accountId;
+    final sourceAccount = await server.getAccount(sourceAccId);
     if (sourceAccount == null) {
       var msg =
           "source account not found on the Stellar Network: $sourceAccount";
@@ -569,16 +658,15 @@ class PasskeyKit {
       throw Exception(msg);
     }
 
-    var credentialsIdBytes =
-        base64Url.decode(base64Url.normalize(credentialsId));
+    var credentialsIdBytes = base64Url.decode(base64Url.normalize(keyId));
     var signer = Secp256r1PasskeySigner(credentialsIdBytes, publicKey,
         storage: PasskeySignerStorage.persistent);
 
     var function = CreateContractWithConstructorHostFunction(
-        Address.forAccountId(sourceAccountId),
+        Address.forAccountId(sourceAccId),
         walletWasmHash,
         [signer.toXdrSCVal()],
-        salt: XdrUint256(_getContractSalt(credentialsId)));
+        salt: XdrUint256(_getContractSalt(keyId)));
 
     final operation = InvokeHostFuncOpBuilder(function).build();
 
@@ -595,7 +683,9 @@ class PasskeyKit {
     transaction.addResourceFee(simulateResponse.minResourceFee!);
     transaction.setSorobanAuth(simulateResponse.sorobanAuth);
 
-    transaction.sign(walletKeyPair, network);
+    if (sourceAccountId == null) {
+      transaction.sign(walletKeyPair, network);
+    }
     return transaction;
   }
 
@@ -660,9 +750,9 @@ class PasskeyKit {
   }
 
   /// Derives the wallet contract id from the webauthn registration response credentials id or
-  /// authentication response credentials id
-  String _deriveContractId({required String credentialsId}) {
-    var contractSalt = _getContractSalt(credentialsId);
+  /// authentication response credentials id: [keyId].
+  String _deriveContractId({required String keyId}) {
+    var contractSalt = _getContractSalt(keyId);
 
     final preimage =
         XdrHashIDPreimage(XdrEnvelopeType.ENVELOPE_TYPE_CONTRACT_ID);
@@ -729,29 +819,46 @@ class PasskeyKit {
   }
 }
 
+/// Contains the elements needed to create a new wallet.
 class CreateWalletResponse {
+  /// keyId identifying the user/signer by their passkey credentials
   String keyId;
-  String contractId;
-  Transaction signedTx;
 
-  CreateWalletResponse(this.keyId, this.contractId, this.signedTx);
+  /// Derived contract id of the new wallet that can be created.
+  String contractId;
+
+  /// The transaction that creates the smart wallet if sent to stellar/soroban.
+  Transaction transaction;
+
+  CreateWalletResponse(this.keyId, this.contractId, this.transaction);
 }
 
+/// Contains new created credentials
 class CreateKeyResponse {
+  /// keyId identifying the user/signer by their passkey credentials
   String keyId;
+
+  /// publicKey of the user/signer identified by keyId.
   String publicKey;
 
   CreateKeyResponse(this.keyId, this.publicKey);
 }
 
+/// Contains the elements obtained by connecting a wallet to the passkey kit instance.
 class ConnectWalletResponse {
+  /// keyId identifying the user/signer by their passkey credentials
   String keyId;
+
+  /// Contract id of the connected wallet.
   String contractId;
+
+  /// username if it could be extracted
   String? username;
 
   ConnectWalletResponse(this.keyId, this.contractId, {this.username});
 }
 
+/// Abstract class representing a passkey signer.
 abstract class PasskeySigner {
   PasskeySignerType type;
   int? expiration;
@@ -794,7 +901,9 @@ abstract class PasskeySigner {
   XdrSCVal toXdrSCVal();
 }
 
+/// Represents a policy passkey signer.
 class PolicyPasskeySigner extends PasskeySigner {
+  /// Address of the policy contract.
   Address address;
 
   PolicyPasskeySigner(this.address,
@@ -814,7 +923,10 @@ class PolicyPasskeySigner extends PasskeySigner {
   }
 }
 
+/// Represents a ed25519 passkey signer.
 class Ed25519PasskeySigner extends PasskeySigner {
+  /// bytes of the signers public key. You can get them from the keypair or
+  /// by using StrKey
   Uint8List publicKeyBytes;
 
   Ed25519PasskeySigner(this.publicKeyBytes,
@@ -834,8 +946,12 @@ class Ed25519PasskeySigner extends PasskeySigner {
   }
 }
 
+/// Represents a secp256r1 passkey signer.
 class Secp256r1PasskeySigner extends PasskeySigner {
+  /// keyId obtained by creating a new key. See [createKey].
   Uint8List keyId;
+
+  /// public key bytes obtained by creating a new key. See [createKey].
   Uint8List publicKey;
 
   Secp256r1PasskeySigner(this.keyId, this.publicKey,
@@ -931,12 +1047,10 @@ class Ed25519Signature {
 }
 
 class PolicySignature {
-
   PolicySignature();
 
   XdrSCVal toXdrSCVal() {
-    return XdrSCVal.forVec(
-        [XdrSCVal.forSymbol("Policy")]);
+    return XdrSCVal.forVec([XdrSCVal.forSymbol("Policy")]);
   }
 }
 

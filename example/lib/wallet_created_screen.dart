@@ -26,7 +26,6 @@ class WalletCreatedScreen extends StatefulWidget {
 }
 
 class _WalletCreatedScreenState extends State<WalletCreatedScreen> {
-
   bool isConnectingWallet = false;
   String? errorMessage;
   PasskeyKit? passkeyKit;
@@ -43,17 +42,19 @@ class _WalletCreatedScreenState extends State<WalletCreatedScreen> {
           ElevatedButton.icon(
             onPressed: () async {
               await WalletCreatedScreen.logout();
-              Navigator.of(NavigationService.navigatorKey.currentContext!).pushAndRemoveUntil(
-                  MaterialPageRoute(
-                      builder: (builder) => const AuthScreen(key: Key('auth_screen'))),
+              Navigator.of(NavigationService.navigatorKey.currentContext!)
+                  .pushAndRemoveUntil(
+                      MaterialPageRoute(
+                          builder: (builder) =>
+                              const AuthScreen(key: Key('auth_screen'))),
                       (predicate) => false);
             },
             label: const Text('Logout'),
             style: ElevatedButton.styleFrom(
               foregroundColor: Colors.white,
               backgroundColor: Colors.deepPurple,
-              padding: const EdgeInsets.symmetric(
-                  vertical: 12.0, horizontal: 24.0),
+              padding:
+                  const EdgeInsets.symmetric(vertical: 12.0, horizontal: 24.0),
               textStyle: const TextStyle(fontSize: 20.0),
             ),
           ),
@@ -135,12 +136,8 @@ class _WalletCreatedScreenState extends State<WalletCreatedScreen> {
   }
 
   PasskeyKit _getPasskeyKit() {
-    passkeyKit ??= PasskeyKit(
-        EnvService.getRpId(),
-        EnvService.getRpcUrl(),
-        EnvService.getWasmHash(),
-        EnvService.getNetwork()
-    );
+    passkeyKit ??= PasskeyKit(EnvService.getRpId(), EnvService.getRpcUrl(),
+        EnvService.getWasmHash(), EnvService.getNetwork());
     return passkeyKit!;
   }
 
@@ -158,22 +155,22 @@ class _WalletCreatedScreenState extends State<WalletCreatedScreen> {
     });
     try {
       var kit = _getPasskeyKit();
-      var result = await kit.connectWallet(AuthService.getPasskeyCredentials,
+      var result = await kit.connectWallet(
+          getPasskeyCredentials: AuthService.getPasskeyCredentials,
           keyId: currentUser.credentialsId);
 
       var user = UserModel(
-          username: result.username != null ? result.username! : currentUser.username ,
+          username:
+              result.username != null ? result.username! : currentUser.username,
           credentialsId: result.keyId,
           contractId: result.contractId);
 
       await _save(user);
 
-      Navigator.of(NavigationService.navigatorKey.currentContext!).pushReplacement(
+      Navigator.of(NavigationService.navigatorKey.currentContext!)
+          .pushReplacement(
         MaterialPageRoute(
-          builder: (context) => HomeScreen(
-            user: user,
-            kit: kit
-          ),
+          builder: (context) => HomeScreen(user: user, kit: kit),
         ),
       );
     } catch (e) {

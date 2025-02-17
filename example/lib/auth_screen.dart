@@ -158,7 +158,7 @@ class _AuthScreenState extends State<AuthScreen> {
       await user.save();
 
       // submit to stellar
-      var response = await StellarService.feeBump(result.signedTx);
+      var response = await StellarService.feeBump(result.transaction);
       if (!response.success) {
         throw Exception("Error submitting transaction to stellar");
       }
@@ -204,7 +204,7 @@ class _AuthScreenState extends State<AuthScreen> {
     });
     try {
       var kit = _getPasskeyKit();
-      var result = await kit.connectWallet(AuthService.getPasskeyCredentials);
+      var result = await kit.connectWallet(getPasskeyCredentials: AuthService.getPasskeyCredentials);
 
       var user = UserModel(
           username: result.username != null ? result.username! : "Friend" ,
