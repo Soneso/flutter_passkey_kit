@@ -32,25 +32,21 @@ class PasskeyKit {
   /// This includes the transaction to be submitted by you to the stellar network, so that the wallet is created.
   /// When calling this function you must provide a [createPasskeyCredentials] function that requests the creation and returns the
   /// users passkey credentials. An example can be found in the example folder of this library.
-  /// If you provide the [sourceAccountId] for the transaction, than you will need to sign it
-  /// with the corresponding keypair. In this case you can send it directly to your soroban rpc server after signing it.
-  /// Otherwise this function will use it's own source account and you will receive an already signed transaction that you
+  /// This function will use it's own source account and you will receive an already signed transaction that you
   /// can send to Stellar via a fee bump transaction or to launchtube (https://github.com/stellar/launchtube).
   Future<CreateWalletResponse> createWallet(
       String appName,
       String userName,
       Future<PublicKeyCredential> Function(
               {required CredentialCreationOptions options})
-          createPasskeyCredentials,
-      {String? sourceAccountId}) async {
+          createPasskeyCredentials) async {
     final createKeyResponse =
         await createKey(appName, userName, createPasskeyCredentials);
 
     var transaction = await _createAndSignDeployTx(
         keyId: createKeyResponse.keyId,
         publicKey:
-            base64Url.decode(base64Url.normalize(createKeyResponse.publicKey)),
-        sourceAccountId: sourceAccountId);
+            base64Url.decode(base64Url.normalize(createKeyResponse.publicKey)));
 
     final contractId = _deriveContractId(keyId: createKeyResponse.keyId);
 
@@ -644,12 +640,11 @@ class PasskeyKit {
 
   Future<Transaction> _createAndSignDeployTx(
       {required String keyId,
-      required Uint8List publicKey,
-      String? sourceAccountId}) async {
+      required Uint8List publicKey}) async {
     final server = SorobanServer(rpcUrl);
     server.enableLogging = true;
 
-    final sourceAccId = sourceAccountId ?? walletKeyPair.accountId;
+    final sourceAccId = walletKeyPair.accountId;
     final sourceAccount = await server.getAccount(sourceAccId);
     if (sourceAccount == null) {
       var msg =
@@ -683,9 +678,7 @@ class PasskeyKit {
     transaction.addResourceFee(simulateResponse.minResourceFee!);
     transaction.setSorobanAuth(simulateResponse.sorobanAuth);
 
-    if (sourceAccountId == null) {
-      transaction.sign(walletKeyPair, network);
-    }
+    transaction.sign(walletKeyPair, network);
     return transaction;
   }
 
