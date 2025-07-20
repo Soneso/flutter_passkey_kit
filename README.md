@@ -32,4 +32,4 @@ The docs of the demo app can be found [here](https://github.com/Soneso/flutter_p
 
 ## Installation
 
-- add `flutter_passkey_kit: ^0.0.1`  to your package's pubspec.yaml
+- add `flutter_passkey_kit: ^0.0.2`  to your package's pubspec.yaml
